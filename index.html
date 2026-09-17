@@ -203,7 +203,7 @@
       </button>
     </div>
     <p class="tut-hint" id="menuHint" hidden></p>
-    <p class="foot">Звук генерируется на лету — включи колонки.</p>
+    <p class="foot">Звук генерируется на лету — включи колонки. · <span id="gameVersion"></span></p>
   </div>
 </div>
 
@@ -310,6 +310,8 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    CONFIG — весь баланс собран здесь. Меняй числа, не трогая логику.
    ═══════════════════════════════════════════════════════════════════════════ */
+const GAME_VERSION = '1.1';   // показывается в главном меню; см. CHANGELOG.md
+
 const CFG = {
   TILE: 40,
 
@@ -5054,6 +5056,8 @@ function runTests() {
   ok('у каждого ствола своя модель', Object.keys(WEAPONS).every(id => GUN_SHAPES[id]));
   ok('обучение ведёт на вкладку ПП', tabOfWeapon(TUTORIAL_WEAPON) === 'smg');
 
+  ok('номер версии в главном меню', $('gameVersion').textContent === `v${GAME_VERSION}`, `v${GAME_VERSION}`);
+
   // ── Стартовый пак ─────────────────────────────────────────────────────
   ok('бесплатный пак спецназа — нож и пистолет',
      STARTER.length === 2 && STARTER.includes('knife') && STARTER.includes('usp'),
@@ -5831,6 +5835,7 @@ function returnToMenu() {
 function boot() {
   resize();
   loadProgress();
+  $('gameVersion').textContent = `v${GAME_VERSION}`;
 
   // Состояние будущих разделов задаём явно в коде, а не только атрибутом
   // в разметке: так его видно из одного места и можно проверить тестом.
