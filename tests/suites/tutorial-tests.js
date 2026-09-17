@@ -71,8 +71,8 @@ bots.forEach(b => { b.alive = false; });
 step(2 + Math.ceil(CFG.END_TIME / DT) + 5);
 say(shown('levelDone'), 'первая операция закрыта');
 say(progress.tutorial === 'arsenal', 'обучение перешло к арсеналу');
-say(progress.money === tutorialCost() && tutorialCost() === 1700,
-    `в кошельке ровно на ПП и бронежилет: ${money(progress.money)} (выплата $1 500 + доплата $200)`);
+say(progress.money === tutorialCost() && tutorialCost() === 1900,
+    `в кошельке ровно на ПП, бронежилет и первое звание бойца: ${money(progress.money)}`);
 say(!$('doneNote').hidden && /Арсенал/.test($('doneNote').textContent) && /MAC-10/.test($('doneNote').textContent) &&
     /Кевлар/.test($('doneNote').textContent), `итоги объясняют: «${$('doneNote').textContent}»`);
 say(arrowAt() === $('btnDoneMenu'), 'стрелка показывает на «В меню»');
@@ -141,13 +141,43 @@ tabBtn('armor').onclick();
 
 // ── Бронежилет завершает обучение ────────────────────────────────────────
 buyArmor('kevlar');
-say(progress.armorEquipped === 'kevlar' && progress.tutorial === 'done', 'кевлар куплен и надет, обучение пройдено');
-say(progress.money === 0, 'денег хватило ровно на оба');
+say(progress.armorEquipped === 'kevlar' && progress.tutorial === 'squad',
+    'кевлар куплен и надет, обучение перешло к отряду');
+say(progress.money === allyUpgradeCost(1), 'осталось ровно на первое улучшение бойца');
 say(!$('arsenalTutorial').hidden && $('arsenalTutorial').classList.contains('ok'),
     `баннер «готово»: «${$('arsenalTutorial').textContent}»`);
 say($('btnArsenalBack').classList.contains('pulse') && arrowAt() === $('btnArsenalBack'), 'стрелка показывает на «В меню»');
 click('btnArsenalBack');
-say(!$('btnArsenal').classList.contains('pulse') && $('menuHint').hidden, 'меню больше не подсвечивает Арсенал');
+
+// ── Отряд: бесплатный боец и первое звание ───────────────────────────────
+say(!$('btnArsenal').classList.contains('pulse') && $('btnSquad').classList.contains('pulse'),
+    'меню ведёт дальше — в «Отряд»');
+say(!$('menuHint').hidden && /Отряд/.test($('menuHint').textContent),
+    `подсказка про отряд: «${$('menuHint').textContent}»`);
+say(arrowAt() === $('btnSquad'), 'стрелка показывает на «Отряд»');
+say(!levelUnlocked(1), 'вторая операция закрыта, пока отряд не собран');
+click('btnSquad');
+say(shown('squadScreen') && !$('squadTutorial').hidden, 'экран отряда с баннером обучения');
+{
+  const hire = [...$('squadList').children].find(c => c.dataset.name === 'hire-assault');
+  say(!!hire && hire.classList.contains('tut-target') && arrowAt() === hire.actionButton,
+      'стрелка показывает на бесплатного штурмовика');
+  hire.actionButton.onclick();
+}
+say(progress.squad.length === 1 && progress.squad[0].cls === 'assault' && progress.squad[0].level === 1,
+    'штурмовик 1-го уровня в отряде');
+say(progress.money === allyUpgradeCost(1), 'первый боец достался даром');
+say(progress.tutorial === 'squad', 'найма мало — обучение ещё идёт');
+{
+  const card = $('squadList').children[0];
+  say(arrowAt() === card.upgradeButton, 'стрелка показывает на «Улучшить»');
+  card.upgradeButton.onclick();
+}
+say(progress.squad[0].level === 2 && progress.tutorial === 'done', 'боец повышен, обучение пройдено');
+say(progress.money === 0, 'денег хватило ровно на всё обучение');
+say($('btnSquadBack').classList.contains('pulse') && arrowAt() === $('btnSquadBack'), 'стрелка ведёт назад в меню');
+click('btnSquadBack');
+say($('menuHint').hidden, 'подсказок в меню больше нет');
 say(arrowAt() === $('btnPlay'), 'стрелка ведёт в «Играть»');
 click('btnPlay');
 say(levelUnlocked(1) && arrowAt() === $('levelList').children[1], 'вторая операция открыта, стрелка на ней');
@@ -188,7 +218,15 @@ say(progress.tutorial === 'arsenal', 'сохранение посреди обу
 localStorage.setItem(PROGRESS_KEY, JSON.stringify({ completed: 1, money: 0, owned: ['knife', 'usp', 'mac10'],
   tutorial: 'arsenal', armorOwned: ['kevlar'], armorEquipped: 'kevlar' }));
 loadProgress();
-say(progress.tutorial === 'done', 'сохранение, где уже куплены оба, обучение закрывает');
+say(progress.tutorial === 'squad', 'сохранение, где куплены оба, ведёт к отряду');
+say(tutorialLocksPurchase('ak') && tutorialLocksPurchase('upgrade'),
+    'на шаге отряда арсенал на паузе: ни покупок, ни прокачки');
+
+localStorage.setItem(PROGRESS_KEY, JSON.stringify({ completed: 1, money: 0, owned: ['knife', 'usp', 'mac10'],
+  tutorial: 'squad', armorOwned: ['kevlar'], armorEquipped: 'kevlar', squad: [{ cls: 'assault', level: 2 }] }));
+loadProgress();
+say(progress.tutorial === 'squad' && progress.squad.length === 1,
+    'стадия отряда переживает перезагрузку вместе с отрядом');
 
 // ── Пустой основной слот ничего не роняет ────────────────────────────────
 progress.equipped.rifle = null; applyLoadout();

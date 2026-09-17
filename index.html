@@ -115,6 +115,9 @@
   .arsenal-catalog{padding:16px 18px;max-height:62vh;overflow:auto;
     display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));gap:10px;
     align-content:start}
+  .wide-cat{max-height:66vh;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .cc-rank{font-size:11px;color:var(--dim);font-weight:600}
+  .cc-gear{font-size:11px;color:var(--dim);margin-top:2px}
   .arsenal-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:12px 22px;border-bottom:1px solid var(--line)}
   .a-tab{padding:8px 15px;border-radius:9px;border:1px solid var(--line);background:#0c121b;
     color:var(--dim);font:inherit;font-weight:600;font-size:13px;cursor:pointer}
@@ -197,6 +200,10 @@
         <span class="mb-title">Арсенал</span>
         <span class="mb-sub">Оружие и броня</span>
       </button>
+      <button class="menu-btn" id="btnSquad">
+        <span class="mb-title">Отряд</span>
+        <span class="mb-sub">Напарники и звания</span>
+      </button>
       <button class="menu-btn" id="btnSettings" disabled>
         <span class="mb-title">Настройки</span>
         <span class="mb-sub">Скоро</span>
@@ -253,6 +260,24 @@
     </div>
     <footer>
       <span id="arsenalHint">Деньги приходят за прохождение операций и за каждую попытку.</span>
+    </footer>
+  </div>
+</div>
+
+<div id="squadScreen" class="overlay screen">
+  <div class="scrim"></div>
+  <div class="panel wide">
+    <header>
+      <h1>Отряд<small id="squadSlotsNote">Бойцы идут за тобой и стреляют сами</small></h1>
+      <div class="spacer"></div>
+      <div class="chip cash" id="squadMoney">$0</div>
+      <button class="go ghost" id="btnSquadBack">← В меню</button>
+    </header>
+    <div class="tut-banner" id="squadTutorial" hidden></div>
+    <div class="arsenal-catalog wide-cat" id="squadList"></div>
+    <footer>
+      <span>В бою: <kbd>5</kbd>–<kbd>8</kbd> выбрать бойца, <kbd>9</kbd> всех,
+        <kbd>F</kbd> приказ по клику, <kbd>G</kbd> вернуть в авто.</span>
     </footer>
   </div>
 </div>
@@ -1317,6 +1342,92 @@ const ARMOR_TYPES = [
 const armorOf = id => ARMOR_TYPES.find(a => a.id === id) || null;
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   ОТРЯД — ИИ-напарники. Идут за игроком, стреляют сами, растут в званиях.
+   Характеристики заданы таблицей по уровням: так видно весь баланс сразу,
+   и любую строку можно проверить тестом. Первый уровень слабее рядового
+   террориста, десятый — примерно как игрок с оружием 7-го уровня и бронёй
+   на 250 очков. Выше отряд не поднимается: зачищать карту должен игрок.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const SQUAD = {
+  MAX_LEVEL: 10,
+  MAX: 4,                       // больше четырёх бойцов не бывает
+  SLOT_AT: [1, 2, 4, 6],        // слот открыт, когда пройдено столько операций
+  FIRST_FREE: 'assault',        // первый боец выдаётся даром
+  FOLLOW: 150,                  // радиус строя вокруг игрока
+  FOLLOW_RUN: 260,              // дальше — бежит догонять
+  FOLLOW_STOP: 70,              // ближе — стоит на месте
+  LEASH: 260,                   // в бою не отходит от своей точки строя дальше
+  ENGAGE: 520,                  // дальность, на которой берёт цель
+  SPEED: 150,                   // чуть быстрее бота, чтобы не отставать
+  STEP_ASIDE: 34,               // ближе — отходит вбок, чтобы не стоять перед игроком
+  HEAL_CD: 6,                   // пауза между импульсами лечения, с
+  HEAL_RANGE: 90,
+  REVIVE_LEVEL: 5,              // с этого уровня медик поднимает раненого
+  REVIVE_TIME: 3,               // сколько стоит над ним, с
+  REVIVE_HP: 0.4,               // с какой долей здоровья поднимает
+  SHIELD_ARC: 1.22,             // щит держит сектор ±70°
+};
+
+/** Звания по уровням. Их видно в панели отряда и на экране «Отряд». */
+const ALLY_RANKS = ['Рядовой', 'Сержант', 'Старшина', 'Прапорщик', 'Мл. лейтенант',
+                    'Лейтенант', 'Капитан', 'Майор', 'Полковник', 'Генерал'];
+const allyRank = level => ALLY_RANKS[clamp(level, 1, SQUAD.MAX_LEVEL) - 1];
+
+/** Цена перехода с уровня N на N+1. Рост нелинейный: полная прокачка бойца
+ *  стоит $23 300 — дороже, чем прокачать автомат игрока до десятого. */
+const SQUAD_COST = [200, 600, 1150, 1750, 2400, 3150, 3900, 4650, 5500];
+const allyUpgradeCost = level => SQUAD_COST[clamp(level, 1, SQUAD.MAX_LEVEL) - 1] || 0;
+
+// Броня по уровням — общая для всех классов, у щитоносца десятый уровень тяжелее.
+const ALLY_ARMOR = [0, 0, 50, 100, 100, 130, 130, 180, 180, 250];
+// Разброс и задержка реакции: даже генерал целится хуже игрока.
+const ALLY_AIM = [0.30, 0.28, 0.25, 0.23, 0.20, 0.18, 0.16, 0.14, 0.12, 0.10];
+const ALLY_REACT = [1.20, 1.12, 1.04, 0.97, 0.89, 0.81, 0.74, 0.66, 0.58, 0.50];
+
+const ALLY_CLASSES = [
+  { id: 'assault', name: 'Штурмовик', short: 'ШТ', max: 2, price: 2500, accent: '#54a8ff',
+    desc: 'Основная огневая сила отряда: идёт рядом и бьёт по всему, что видит',
+    hp:     [90, 94, 98, 102, 106, 110, 114, 118, 122, 126],
+    dmg:    [.55, .58, .61, .64, .67, .70, .73, .76, .78, .80],
+    armor:  ALLY_ARMOR,
+    guns:   ['glock', 'p250', 'mac10', 'ump45', 'mp5', 'galil', 'famas', 'ak', 'm4', 'aug'],
+    gunLv:  [1, 1, 2, 3, 4, 5, 5, 6, 7, 7] },
+  { id: 'medic', name: 'Медик', short: 'МД', max: 1, price: 3500, accent: '#3ddc97',
+    desc: 'Лечит отряд на ходу. С пятого уровня поднимает одного раненого за раунд',
+    hp:     [85, 89, 93, 97, 100, 104, 108, 112, 116, 120],
+    dmg:    [.45, .47, .49, .51, .54, .56, .58, .60, .63, .65],
+    armor:  ALLY_ARMOR,
+    guns:   ['glock', 'glock', 'p250', 'p250', 'mac10', 'mac10', 'mac10', 'mp5', 'mp5', 'mp5'],
+    gunLv:  [1, 1, 1, 2, 2, 3, 3, 4, 5, 6],
+    heal:   [14, 16, 18, 20, 22, 24, 26, 28, 30, 32] },
+  { id: 'shield', name: 'Щитоносец', short: 'ЩТ', max: 1, price: 4000, accent: '#ffc857',
+    desc: 'Идёт первым и держит щит: урон спереди уходит в щит, а не в отряд',
+    hp:     [110, 114, 119, 123, 128, 132, 137, 141, 146, 150],
+    dmg:    [.40, .42, .44, .47, .49, .51, .53, .56, .58, .60],
+    armor:  [0, 0, 50, 100, 100, 130, 130, 180, 180, 350],
+    guns:   ['glock', 'glock', 'p250', 'p250', 'usp', 'usp', 'fiveseven', 'fiveseven', 'deagle', 'deagle'],
+    gunLv:  [1, 1, 1, 2, 2, 3, 3, 4, 5, 6],
+    shield: [110, 135, 160, 190, 215, 240, 270, 295, 320, 350] },
+];
+const allyClass = id => ALLY_CLASSES.find(c => c.id === id) || null;
+
+/** Все характеристики бойца на уровне — одним объектом. Читается и панелью
+ *  отряда, и экраном найма, и самой сущностью в бою. */
+function allyStats(clsId, level) {
+  const c = allyClass(clsId);
+  if (!c) return null;
+  const i = clamp(level, 1, SQUAD.MAX_LEVEL) - 1;
+  return {
+    cls: c.id, name: c.name, accent: c.accent, level: i + 1, rank: allyRank(i + 1),
+    hp: c.hp[i], dmg: c.dmg[i], armor: c.armor[i], aim: ALLY_AIM[i], react: ALLY_REACT[i],
+    weapon: c.guns[i], weaponLv: c.gunLv[i],
+    shield: c.shield ? c.shield[i] : 0,
+    heal: c.heal ? c.heal[i] : 0,
+    melee: c.id === 'shield',                 // щитоносец добивает ножом вплотную
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    СОСТОЯНИЕ МИРА
    ═══════════════════════════════════════════════════════════════════════════ */
 const PHASE = { BUY:'buy', LIVE:'live', END:'end' };
@@ -1354,6 +1465,7 @@ const player = {
 };
 
 let bots = [];
+let allies = [];    // отряд игрока: собирается из progress.squad перед раундом
 let hostages = [];
 let tracers = [];
 let noises = [];
@@ -1647,7 +1759,9 @@ const Audio2D = (() => {
 // Оружие игрока — с его прокачкой; у ботов стволы базовые.
 const playerWeapon = id => upgradedWeapon(id, weaponLevel(id));
 const activeWeapon = () => playerWeapon(player.slots[player.active]) || WEAPONS.knife;
-const weaponOf = e => (e === player ? activeWeapon() : WEAPONS[e.weapon]);
+const weaponOf = e => (e === player ? activeWeapon()
+  : e.kind === 'ally' ? upgradedWeapon(e.weapon, e.weaponLv)
+  : WEAPONS[e.weapon]);
 
 /** Патроны сущности для конкретного ствола (создаются лениво). */
 function ammoOf(e, wid) {
@@ -1657,22 +1771,39 @@ function ammoOf(e, wid) {
 }
 
 function giveWeapon(e, wid, full = true) {
-  const w = e === player ? playerWeapon(wid) : WEAPONS[wid];
+  const w = e === player ? playerWeapon(wid)
+    : e.kind === 'ally' ? upgradedWeapon(wid, e.weaponLv || 1)
+    : WEAPONS[wid];
   if (e === player) player.slots[w.slot] = wid;
   else e.weapon = wid;
   if (full || !e.ammo[wid]) e.ammo[wid] = { mag: w.mag, reserve: w.reserve };
 }
 
 /** Оружие в руках врага бьёт слабее, чем то же самое в руках игрока.
+ *  У союзника множитель растёт с уровнем, но до единицы не доходит:
+ *  отряд помогает, а зачищает карту игрок.
  *  Множитель применяется к урону, не к пробитию — броня не обесценивается. */
-const damageScale = attacker => (attacker === player ? 1 : CFG.ENEMY_DAMAGE);
+const damageScale = attacker => (attacker === player ? 1
+  : attacker.kind === 'ally' ? attacker.stats.dmg
+  : CFG.ENEMY_DAMAGE);
 
 /** Урон с учётом брони и шлема. Возвращает фактически снятое здоровье. */
 function applyDamage(t, dmg, pierce, attacker) {
   if (!t.alive) return 0;
   let out = dmg;
-  if (t === player) {
-    // Броня игрока гасит урон полностью, пока есть очки; остаток — в здоровье.
+  // Щит держит только фронт: удар в спину проходит мимо него целиком.
+  if (t.kind === 'ally' && t.shield > 0 && attacker) {
+    const from = Math.atan2(attacker.y - t.y, attacker.x - t.x);
+    if (Math.abs(angDiff(from, t.ang)) <= SQUAD.SHIELD_ARC) {
+      const held = Math.min(t.shield, dmg);
+      t.shield -= held;
+      dmg -= held;
+      out = dmg;
+      if (dmg <= 0) { t.lastHurt = 0.25; return 0; }
+    }
+  }
+  if (t === player || t.kind === 'ally') {
+    // Броня своих гасит урон полностью, пока есть очки; остаток — в здоровье.
     const absorbed = Math.min(t.armor, dmg);
     t.armor -= absorbed;
     out = dmg - absorbed;
@@ -1761,6 +1892,9 @@ function settleParticle(p) {
 }
 
 function killEntity(t, attacker) {
+  // Союзник не гибнет насовсем: падает раненым до конца раунда, а медик
+  // может поднять его прямо в бою. Уровень и снаряжение не теряются никогда.
+  if (t.kind === 'ally') { downAlly(t); return; }
   t.alive = false;
   t.hp = 0;
   // Кровь во все стороны и лужа, которая растекается под телом.
@@ -1804,6 +1938,8 @@ function bulletTargets(attacker) {
   const team = attacker.team;
   if (player.alive && team !== 'ct') out.push(player);
   for (const b of bots) if (b.alive && b.team !== team) out.push(b);
+  // Союзники — та же команда, что игрок: свои пули их не задевают и не вязнут в них.
+  for (const a of allies) if (a.alive && a.team !== team) out.push(a);
   for (const h of hostages) if (h.alive) out.push(h);   // заложники ловят всё
   return out;
 }
@@ -1867,7 +2003,7 @@ function hitscan(ox, oy, ang, w, attacker) {
 /** Боты, в которых попали или мимо которых вплотную прошла пуля игрока,
  *  разворачиваются к стрелку. Проверяется весь путь пули от ствола до конца. */
 function alertShotBots(attacker, ox, oy, hx, hy, victim) {
-  if (attacker !== player) return;
+  if (attacker !== player && attacker.kind !== 'ally') return;
   const dx = hx - ox, dy = hy - oy, len2 = dx * dx + dy * dy || 1;
   for (const b of bots) {
     if (!b.alive) continue;
@@ -2101,6 +2237,17 @@ class Bot {
     return best;
   }
 
+  /** Ближайший видимый противник: игрок или боец его отряда. */
+  pickTarget() {
+    let best = null, bestD = Infinity;
+    for (const t of [player, ...allies]) {
+      if (!t.alive || !botSees(this, t.x, t.y)) continue;
+      const d = dist2(this.x, this.y, t.x, t.y);
+      if (d < bestD) { bestD = d; best = t; }
+    }
+    return best;
+  }
+
   /** Не заденет ли выстрел заложника на линии огня. */
   hostageInLine(tx, ty) {
     const a = Math.atan2(ty - this.y, tx - this.x);
@@ -2129,9 +2276,11 @@ class Bot {
     if (ammoOf(this, w.id).mag <= 0 && this.reloading <= 0) startReload(this);
 
     // Реагирует только на то, что видит сам: перекличку убрали вместе с погоней.
-    const sees = player.alive && botSees(this, player.x, player.y);
+    // Целью может быть игрок или любой его боец — кто ближе из видимых.
+    const sees = this.pickTarget();
+    this.foe = sees;
     if (sees) {
-      this.lastKnown = { x: player.x, y: player.y };
+      this.lastKnown = { x: sees.x, y: sees.y };
       if (this.mode !== 'engage' && this.mode !== 'cover') this.setMode('engage');
     } else if (this.mode === 'engage') {
       // Потерял из виду — держит последнее направление, потом возвращается.
@@ -2183,7 +2332,10 @@ class Bot {
   }
 
   doEngage(dt) {
-    const tx = player.x, ty = player.y;
+    // Цель могла погибнуть между кадрами — тогда бьёмся по последней известной точке.
+    const foe = this.foe && this.foe.alive ? this.foe : null;
+    const tx = foe ? foe.x : this.lastKnown ? this.lastKnown.x : player.x;
+    const ty = foe ? foe.y : this.lastKnown ? this.lastKnown.y : player.y;
     const aim = Math.atan2(ty - this.y, tx - this.x);
     const d = dist(this.x, this.y, tx, ty);
     const w = weaponOf(this);
@@ -2221,6 +2373,323 @@ class Bot {
     } else if (!w.auto) {
       this.cooldown += rand(0.12, 0.4);
     }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ОТРЯД — союзник ходит тем же поиском пути, что заложник, и стреляет тем же
+   fireWeapon, что бот. Своего в нём — только строй, выбор цели и приказы.
+   Столкновений между сущностями в движке нет, поэтому перекрыть игроку
+   проход боец не может; вплотную он всё равно отходит вбок, чтобы не
+   загораживать обзор в дверях.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Место бойца в строю: дуга за спиной игрока, по одному сектору на каждого. */
+function squadSlotPoint(idx, total) {
+  const spread = 0.62;
+  const base = player.ang + Math.PI;                    // за спиной
+  const a = base + (idx - (total - 1) / 2) * spread;
+  return { x: player.x + Math.cos(a) * SQUAD.FOLLOW, y: player.y + Math.sin(a) * SQUAD.FOLLOW };
+}
+
+class Ally {
+  constructor(cls, level, idx) {
+    const st = allyStats(cls, level);
+    Object.assign(this, {
+      x: SPAWN_CT.x, y: SPAWN_CT.y, r: CFG.PLAYER_R, ang: -Math.PI / 2,
+      cls, level, idx, stats: st,
+      hp: st.hp, hpMax: st.hp, armor: st.armor, armorMax: st.armor, helmet: false,
+      shield: st.shield, shieldMax: st.shield,
+      alive: true, down: false, revivedThisRound: false,
+      team: 'ct', kind: 'ally', weapon: st.weapon, weaponLv: st.weaponLv, ammo: {},
+      cooldown: 0, reloading: 0, spread: 0, lastHurt: 0,
+      mode: 'follow', order: null, selected: false,
+      target: null, react: st.react, burst: 3,
+      goal: null, path: null, pathIdx: 0, repath: 0,
+      healCd: SQUAD.HEAL_CD, reviveT: 0, reviveTarget: null,
+      kit: allyKit(cls, level),
+    });
+    giveWeapon(this, st.weapon);
+  }
+
+  /** Куда боец стремится: точка приказа или своё место в строю. */
+  anchor() {
+    return this.order || squadSlotPoint(this.idx, Math.max(1, allies.length));
+  }
+
+  /** Ближайший видимый враг, но не дальше своего радиуса боя и не через стену. */
+  pickTarget() {
+    let best = null, bestD = SQUAD.ENGAGE;
+    for (const b of bots) {
+      if (!b.alive) continue;
+      const d = dist(this.x, this.y, b.x, b.y);
+      if (d > bestD) continue;
+      if (!lineClear(this.x, this.y, b.x, b.y)) continue;
+      // Далеко от своей точки боец не уходит даже за целью.
+      const a = this.anchor();
+      if (dist(b.x, b.y, a.x, a.y) > SQUAD.LEASH + SQUAD.ENGAGE) continue;
+      best = b; bestD = d;
+    }
+    return best;
+  }
+
+  /** Не заденет ли выстрел заложника или своего на линии огня. */
+  lineBlocked(tx, ty) {
+    const a = Math.atan2(ty - this.y, tx - this.x);
+    const dx = Math.cos(a), dy = Math.sin(a);
+    const target = dist(this.x, this.y, tx, ty);
+    const shielded = [...hostages, ...allies.filter(o => o !== this && o.alive), player];
+    for (const h of shielded) {
+      if (!h.alive) continue;
+      const t = rayCircle(this.x, this.y, dx, dy, h.x, h.y, h.r + 6);
+      if (Number.isFinite(t) && t > 0 && t < target) return true;
+    }
+    return false;
+  }
+
+  /** Шаг к точке: коридор свободен — идём напрямик, иначе по A*. */
+  stepTo(x, y, dt, speedMul = 1) {
+    const d = dist(this.x, this.y, x, y);
+    let ang;
+    if (corridorClear(this.x, this.y, x, y, this.r)) {
+      ang = Math.atan2(y - this.y, x - this.x);
+      this.path = null;
+    } else {
+      this.repath -= dt;
+      if (!this.path || this.repath <= 0 || !this.goal || dist(this.goal.x, this.goal.y, x, y) > 40) {
+        this.goal = { x, y };
+        const raw = findPath(this.x, this.y, x, y);
+        this.path = raw ? smoothPath(raw, this.x, this.y, this.r) : null;
+        this.pathIdx = 0; this.repath = 0.45;
+      }
+      const wp = this.path && this.path[this.pathIdx];
+      if (!wp) return false;
+      if (dist(this.x, this.y, wp.x, wp.y) < 16) { this.pathIdx++; return true; }
+      ang = Math.atan2(wp.y - this.y, wp.x - this.x);
+    }
+    const sp = SQUAD.SPEED * speedMul * clamp(d / 60, 0.4, 1);
+    moveEntity(this, Math.cos(ang) * sp * dt, Math.sin(ang) * sp * dt);
+    this.moveAng = ang;
+    return true;
+  }
+
+  /** Стоять вплотную перед игроком нельзя: боец сдвигается вбок. */
+  stepAside(dt) {
+    const d = dist(this.x, this.y, player.x, player.y);
+    if (d > SQUAD.STEP_ASIDE) return;
+    const a = Math.atan2(this.y - player.y, this.x - player.x) + Math.PI / 2;
+    moveEntity(this, Math.cos(a) * SQUAD.SPEED * 0.6 * dt, Math.sin(a) * SQUAD.SPEED * 0.6 * dt);
+  }
+
+  update(dt) {
+    if (this.down) { this.reviveT = Math.max(0, this.reviveT - dt); return; }
+    if (!this.alive) return;
+
+    this.cooldown -= dt;
+    this.lastHurt -= dt;
+    this.spread = Math.max(0, this.spread - CFG.RECOIL_DECAY * 0.8 * dt);
+    if (this.reloading > 0) {
+      this.reloading -= dt;
+      if (this.reloading <= 0) finishReload(this);
+    }
+    const w = weaponOf(this);
+    if (w.slot !== 'melee' && ammoOf(this, w.id).mag <= 0 && this.reloading <= 0) startReload(this);
+
+    // Подъём раненого важнее строя и огня: пока медик занят, он не отходит.
+    if (this.stats.heal && this.doHeal(dt)) {
+      this.mode = 'revive';
+      this.stepAside(dt);
+      return;
+    }
+
+    const seen = this.pickTarget();
+    if (seen && !this.target) this.react = this.stats.react;
+    this.target = seen;
+    this.mode = seen ? 'engage' : this.order ? 'hold' : 'follow';
+
+    if (seen) this.doEngage(dt, seen);
+    else this.doMove(dt);
+    this.stepAside(dt);
+  }
+
+  /** Медик: импульс лечения самому раненому рядом, а с пятого уровня —
+   *  подъём одного упавшего за раунд. Возвращает true, пока занят подъёмом. */
+  doHeal(dt) {
+    this.healCd -= dt;
+    // Поднять упавшего важнее, чем подлечить царапину.
+    if (this.level >= SQUAD.REVIVE_LEVEL && !squadRevivedThisRound()) {
+      const fallen = allies.find(a => a.down && dist(this.x, this.y, a.x, a.y) < SQUAD.HEAL_RANGE * 2);
+      if (fallen) {
+        this.reviveTarget = fallen;
+        if (dist(this.x, this.y, fallen.x, fallen.y) > 34) {
+          this.stepTo(fallen.x, fallen.y, dt);
+          if (this.moveAng !== undefined) this.ang = turnToward(this.ang, this.moveAng, 8 * dt);
+          return true;
+        }
+        this.reviveT += dt;
+        if (this.reviveT >= SQUAD.REVIVE_TIME) { reviveAlly(fallen); this.reviveT = 0; this.reviveTarget = null; }
+        return true;
+      }
+      this.reviveT = 0;
+      this.reviveTarget = null;
+    }
+    if (this.healCd > 0) return false;
+    let worst = null, gap = 1;
+    for (const t of [player, ...allies.filter(a => a.alive && a !== this)]) {
+      if (!t.alive) continue;
+      const max = t === player ? CFG.PLAYER_HP : t.hpMax;
+      const frac = t.hp / max;
+      if (frac >= 1 || dist(this.x, this.y, t.x, t.y) > SQUAD.HEAL_RANGE) continue;
+      if (frac < gap) { gap = frac; worst = t; }
+    }
+    if (!worst) return false;
+    const max = worst === player ? CFG.PLAYER_HP : worst.hpMax;
+    worst.hp = Math.min(max, worst.hp + this.stats.heal);
+    this.healCd = SQUAD.HEAL_CD;
+    burstParticles(6, { x: worst.x, y: worst.y, speed: 60, life: 0.6, size: 2.4,
+                        colors: ['#3ddc97', '#7ff0c0'], drag: 3, glow: true });
+    if (worst === player) notice(player.x, player.y, 'медик: +' + this.stats.heal, true);
+    return false;                      // лечение на ходу: строй боец не бросает
+  }
+
+  /** Вне боя: держится своей точки — строя или приказа. */
+  doMove(dt) {
+    const a = this.anchor();
+    const d = dist(this.x, this.y, a.x, a.y);
+    const stop = this.order ? 18 : SQUAD.FOLLOW_STOP;
+    if (d > stop) {
+      this.stepTo(a.x, a.y, dt, d > SQUAD.FOLLOW_RUN ? 1.25 : 1);
+      if (this.moveAng !== undefined) this.ang = turnToward(this.ang, this.moveAng, 8 * dt);
+    } else {
+      // На месте смотрит туда же, куда игрок: отряд держит общий сектор.
+      this.ang = turnToward(this.ang, this.order ? this.ang : player.ang, 2.4 * dt);
+    }
+  }
+
+  doEngage(dt, t) {
+    const aim = Math.atan2(t.y - this.y, t.x - this.x);
+    const d = dist(this.x, this.y, t.x, t.y);
+    const w = weaponOf(this);
+    this.ang = turnToward(this.ang, aim, 5.2 * dt);
+    this.react -= dt;
+
+    // Дистанцию держит, но своей точки не бросает: отряд не растаскивает по карте.
+    const a = this.anchor();
+    const want = this.stats.melee ? 90 : clamp(w.range * 0.4, 150, 330);
+    const pull = clamp((d - want) / 110, -1, 1);
+    const off = dist(this.x, this.y, a.x, a.y);
+    const home = off > SQUAD.LEASH ? 1 : 0;
+    if (home) this.stepTo(a.x, a.y, dt);
+    else if (Math.abs(pull) > 0.15)
+      moveEntity(this, Math.cos(aim) * pull * SQUAD.SPEED * 0.7 * dt,
+                       Math.sin(aim) * pull * SQUAD.SPEED * 0.7 * dt);
+
+    if (this.react > 0) return;
+    if (d > w.range * 0.95) return;
+    if (Math.abs(angDiff(aim, this.ang)) > 0.18) return;
+    if (this.lineBlocked(t.x, t.y)) return;            // по своим не стреляем
+    if (this.cooldown > 0 || this.reloading > 0) return;
+
+    fireWeapon(this, this.ang, this.stats.aim);
+    if (--this.burst <= 0) {
+      this.burst = 2 + (Math.random() * 3 | 0);
+      this.cooldown += rand(0.35, 0.8);
+    } else if (!w.auto) {
+      this.cooldown += rand(0.12, 0.35);
+    }
+  }
+}
+
+/** Боец упал: до конца раунда вне боя, пока его не поднимет медик. */
+function downAlly(a) {
+  a.alive = false;
+  a.down = true;
+  a.hp = 0;
+  a.shield = 0;
+  a.order = null;
+  a.selected = false;
+  burstParticles(12, { x: a.x, y: a.y, speed: 170, life: 0.5, size: 3,
+                       colors: BLOOD_COLORS, drag: 4, settle: 'blood' });
+  decals.push({ x: a.x, y: a.y, kind: 'pool', life: 1, decay: 0.012,
+                r: 2, rMax: a.r * rand(1.6, 2.1), seed: Math.random() });
+  notice(a.x, a.y, a.stats.rank + ' ранен', false);
+  Audio2D.hit(a.x, a.y);
+}
+
+const squadRevivedThisRound = () => allies.some(a => a.revivedThisRound);
+
+function reviveAlly(a) {
+  a.alive = true;
+  a.down = false;
+  a.revivedThisRound = true;
+  a.hp = Math.round(a.hpMax * SQUAD.REVIVE_HP);
+  a.shield = a.shieldMax;
+  notice(a.x, a.y, a.stats.rank + ' в строю', true);
+  Audio2D.ui(true);
+}
+
+/* ── Приказы ──────────────────────────────────────────────────────────────
+   Два режима: авто (строй и самостоятельный бой) и точка удержания.
+   Выделять бойцов можно клавишами 5–8, всех — 9; F ставит приказ следующим
+   кликом по карте, G возвращает весь отряд в авто. */
+const squadCmd = { pending: false, fireLock: 0 };
+
+const squadSelected = () => allies.filter(a => a.selected && !a.down);
+
+function selectAlly(i, only = true) {
+  const a = allies[i];
+  if (!a) return;
+  if (only) for (const o of allies) o.selected = false;
+  a.selected = !only ? !a.selected : true;
+  squadCmd.pending = false;
+}
+
+function selectAllAllies() {
+  const all = allies.filter(a => !a.down);
+  const already = all.length && all.every(a => a.selected);
+  for (const a of allies) a.selected = !already && !a.down;
+  squadCmd.pending = false;
+}
+
+/** F — ждём клик по карте. Если никто не выделен, приказ получает весь отряд. */
+function beginSquadOrder() {
+  if (!allies.some(a => !a.down)) return;
+  if (!squadSelected().length) selectAllAllies();
+  squadCmd.pending = true;
+  Audio2D.ui(true);
+}
+
+function placeSquadOrder(x, y) {
+  const chosen = squadSelected();
+  if (!chosen.length) return false;
+  // Точка на стене приказ не получает — иначе боец будет вечно в неё упираться.
+  if (!walkable(Math.floor(x / CFG.TILE), Math.floor(y / CFG.TILE))) { Audio2D.ui(false); return false; }
+  chosen.forEach((a, i) => {
+    const off = i * 26 - (chosen.length - 1) * 13;
+    a.order = { x: x + Math.cos(i * 2.4) * off, y: y + Math.sin(i * 2.4) * off };
+    a.goal = null; a.path = null;
+  });
+  squadCmd.pending = false;
+  squadCmd.fireLock = 0.25;         // клик по приказу не должен ещё и стрелять
+  notice(x, y, 'приказ: держать позицию', true);
+  Audio2D.ui(true);
+  return true;
+}
+
+/** G — весь отряд обратно в авто. */
+function squadAuto() {
+  for (const a of allies) { a.order = null; a.goal = null; a.path = null; a.selected = false; }
+  squadCmd.pending = false;
+  Audio2D.ui(true);
+}
+
+function updateSquad(dt) {
+  squadCmd.fireLock = Math.max(0, squadCmd.fireLock - dt);
+  for (const a of allies) a.update(dt);
+  if (squadCmd.pending && mouse.clicked) {
+    const m = mouseWorld();
+    placeSquadOrder(m.x, m.y);
+    mouse.clicked = false;
   }
 }
 
@@ -2348,6 +2817,7 @@ function startRound() {
   });
 
   hostages = HOSTAGE_POS.map((p, i) => new Hostage(p, i));
+  spawnSquad();
 
   tracers = []; noises = [];
   decals = []; corpses = []; flashes = []; popups = []; drops = []; particles = [];
@@ -2355,6 +2825,22 @@ function startRound() {
   state.phase = PHASE.BUY;
   state.timer = CFG.BUY_TIME;
   state.endReason = '';
+}
+
+/** Отряд собирается заново каждый раунд: раненые снова в строю, щит целый.
+ *  Бойцы встают дугой за спиной игрока и сразу переходят в авто. */
+function spawnSquad() {
+  allies = squadRoster().map(({ cls, level }, i) => new Ally(cls, level, i));
+  const n = allies.length;
+  for (const a of allies) {
+    const p = squadSlotPoint(a.idx, n);
+    // Точка строя может оказаться в стене — тогда боец встаёт на спавн игрока.
+    if (hitsWall(p.x, p.y, a.r)) { a.x = SPAWN_CT.x; a.y = SPAWN_CT.y; }
+    else { a.x = p.x; a.y = p.y; }
+    a.ang = player.ang;
+  }
+  squadCmd.pending = false;
+  squadCmd.fireLock = 0;
 }
 
 function beginLive() {
@@ -2487,7 +2973,7 @@ window.addEventListener('keydown', e => {
 
   if (k === 'escape') {
     if (exitConfirmOpen()) { closeExitConfirm(); e.preventDefault(); return; }
-    if (!state.running && (arsenalOpen() || $('levelScreen').classList.contains('show')))
+    if (!state.running && (arsenalOpen() || squadOpen() || $('levelScreen').classList.contains('show')))
       showScreen('menuScreen');
     else togglePause();
     e.preventDefault();
@@ -2500,6 +2986,11 @@ window.addEventListener('keydown', e => {
   if (k === '3') selectSlot('melee');
   if (k === 'r' || k === 'к') startReload(player);
   if (k === 'e' || k === 'у') useAction();
+  // Отряд: 5–8 — выбрать бойца, 9 — всех, F — приказ следующим кликом, G — авто.
+  if ('5678'.includes(k)) selectAlly(Number(k) - 5);
+  if (k === '9') selectAllAllies();
+  if (k === 'f' || k === 'а') beginSquadOrder();
+  if (k === 'g' || k === 'п') squadAuto();
   if (k === '`' || k === 'ё' || k === '~') state.debug = !state.debug;
   if (k === 'm' || k === 'ь') state.sheet = !state.sheet;
   if ([' ', 'tab'].includes(k)) e.preventDefault();
@@ -2632,7 +3123,9 @@ function updatePlayer(dt) {
   const moveSpread = (player.speed / playerTopSpeed()) * CFG.MOVE_SPREAD * (player.aiming ? 0.5 : 1);
 
   const w = activeWeapon();
-  const wantFire = w.auto ? mouse.down : mouse.clicked;
+  // Клик, которым отдали приказ отряду, стрелять не должен.
+  const wantFire = squadCmd.pending || squadCmd.fireLock > 0 ? false
+    : w.auto ? mouse.down : mouse.clicked;
   if (wantFire && player.cooldown <= 0) {
     fireWeapon(player, player.ang, moveSpread);
   }
@@ -2655,13 +3148,20 @@ function updateGait(e, dt) {
 }
 
 function updateWorld(dt) {
+  // Клик по панели отряда — это команда, а не выстрел.
+  if (mouse.clicked && squadPanelClick(mouse.x, mouse.y)) {
+    mouse.clicked = false;
+    squadCmd.fireLock = 0.2;
+  }
   updatePlayer(dt);
   if (state.phase === PHASE.LIVE) {
     for (const b of bots) b.update(dt);
+    updateSquad(dt);
     for (const h of hostages) h.update(dt);
   }
   updateGait(player, dt);
   for (const b of bots) updateGait(b, dt);
+  for (const a of allies) updateGait(a, dt);
   for (const h of hostages) updateGait(h, dt);
 
   const fade = (arr, rate) => { for (const o of arr) o.life -= dt * rate; return arr.filter(o => o.life > 0); };
@@ -2793,6 +3293,36 @@ const CT_KIT = {
   accent: '#54a8ff', gear: { radio: true },
 };
 
+/* ── Комплект союзника ────────────────────────────────────────────────────
+   Один базовый цвет на класс и четыре ступени снаряжения: чем выше звание,
+   тем тяжелее экипировка. Рост видно прямо на модели: платок → балаклава →
+   каска → каска с визором, потом разгрузка, подсумки и рюкзак. */
+const ALLY_KIT_BASE = {
+  assault: { cloth: '#2f4159', clothDark: '#1f2c3a', clothLight: '#3d5675',
+             cap: '#35485f', capRim: '#52709a', visor: '#8ad6ff' },
+  medic:   { cloth: '#2c4a41', clothDark: '#1d322c', clothLight: '#3d6458',
+             cap: '#2f5a4b', capRim: '#4f8f78', visor: '#8affd0' },
+  shield:  { cloth: '#4a4331', clothDark: '#332e21', clothLight: '#645a42',
+             cap: '#5a4d2f', capRim: '#96813f', visor: '#ffd98a' },
+};
+
+function allyKit(clsId, level) {
+  const c = allyClass(clsId) || ALLY_CLASSES[0];
+  const base = ALLY_KIT_BASE[c.id] || ALLY_KIT_BASE.assault;
+  const lv = clamp(level, 1, SQUAD.MAX_LEVEL);
+  const tier = lv >= 9 ? 3 : lv >= 7 ? 2 : lv >= 4 ? 1 : 0;
+  return {
+    ...base,
+    skin: '#c89b73', boots: '#151c25', glove: '#1a2430',
+    rig: tier >= 1 ? '#1b2734' : null,
+    pouch: tier >= 1 ? '#2c3e54' : null,
+    head: tier >= 2 ? 'helmet' : tier >= 1 ? 'balaclava' : 'bandana',
+    visor: tier >= 3 ? base.visor : null,
+    accent: c.accent,
+    gear: { radio: tier >= 1, beltAmmo: tier >= 2, backpack: tier >= 3 },
+  };
+}
+
 const T_KITS = [
   { skin: '#b98a60', cloth: '#4b4234', clothDark: '#352e20', clothLight: '#5d5341',
     rig: '#2b2418', pouch: '#3c3423', boots: '#1b1610',
@@ -2829,6 +3359,7 @@ const HOSTAGE_KITS = [
 
 function kitOf(e) {
   if (e.kind === 'hostage') return e.kit || HOSTAGE_KITS[0];
+  if (e.kind === 'ally') return e.kit || allyKit('assault', 1);
   if (e === player || e.team === 'ct') return CT_KIT;
   return e.kit || T_KITS[0];
 }
@@ -4292,6 +4823,69 @@ function drawPlayer() {
   ctx.setLineDash([]);
 }
 
+/* ── Отряд на карте ───────────────────────────────────────────────────────
+   Союзник рисуется той же моделью, что игрок и враги. Сверху — только то,
+   что нужно для управления: цветная дужка класса, отметка выделения,
+   точка приказа и щит у щитоносца. */
+function drawAllies() {
+  for (const a of allies) {
+    if (a.down) {
+      // Раненый лежит: тёмное пятно и метка, чтобы медик и игрок его нашли.
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = 'rgba(20,24,30,.8)';
+      ctx.beginPath(); ctx.ellipse(a.x, a.y, a.r * 1.3, a.r * 0.8, a.ang, 0, TAU); ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = '#ff5566';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(a.x, a.y, a.r + 6, 0, TAU); ctx.stroke();
+      ctx.fillStyle = '#ff5566';
+      ctx.font = '700 9px ui-monospace, Menlo, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('РАНЕН', a.x, a.y - a.r - 10);
+      continue;
+    }
+    if (!a.alive) continue;
+
+    // Точка приказа и линия к ней — видно, куда отправлен боец.
+    if (a.order) {
+      ctx.strokeStyle = hexAlpha(a.stats.accent, 0.3);
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(a.order.x, a.order.y); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath(); ctx.arc(a.order.x, a.order.y, 9, 0, TAU); ctx.stroke();
+    }
+
+    // Щит держит фронт: дуга перед бойцом, тускнеет по мере расхода.
+    if (a.shieldMax > 0) {
+      ctx.globalAlpha = 0.25 + 0.5 * (a.shield / a.shieldMax);
+      ctx.strokeStyle = a.stats.accent;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(a.x, a.y, a.r + 5, a.ang - SQUAD.SHIELD_ARC, a.ang + SQUAD.SHIELD_ARC);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    const w = weaponOf(a);
+    drawOperative(ctx, a, {
+      weapon: a.weapon,
+      reloadT: a.reloading > 0 && w.reload ? clamp(a.reloading / w.reload, 0, 1) : 0,
+    });
+
+    // Дужка класса под ногами: свои отличаются от врагов с одного взгляда.
+    ctx.strokeStyle = hexAlpha(a.stats.accent, a.selected ? 0.95 : 0.5);
+    ctx.lineWidth = a.selected ? 2.4 : 1.6;
+    ctx.beginPath(); ctx.arc(a.x, a.y, a.r + 4, a.ang + 2.2, a.ang - 2.2); ctx.stroke();
+    if (a.selected) {
+      ctx.fillStyle = a.stats.accent;
+      ctx.font = '700 9px ui-monospace, Menlo, monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(String(a.idx + 5), a.x, a.y - a.r - 8);
+    }
+  }
+}
+
 function drawProjectilesAndFx() {
   ctx.globalCompositeOperation = 'lighter';
   for (const t of tracers) {
@@ -4550,6 +5144,101 @@ function drawWeaponPanel() {
   }
 }
 
+/* ── Панель отряда ────────────────────────────────────────────────────────
+   Левый край над здоровьем: строка на бойца и три кнопки. Клики ловятся
+   по тем же прямоугольникам, что нарисованы, — отдельной разметки нет. */
+const SQUAD_PANEL = { w: 236, row: 30, head: 20, btn: 26, pad: 8 };
+let squadHitAreas = [];
+
+function squadPanelRect() {
+  const n = allies.length;
+  if (!n) return null;
+  const h = SQUAD_PANEL.head + n * SQUAD_PANEL.row + SQUAD_PANEL.btn + SQUAD_PANEL.pad * 2;
+  return { x: 18, y: view.h - 84 - 18 - h, w: SQUAD_PANEL.w, h };
+}
+
+function drawSquadPanel() {
+  squadHitAreas = [];
+  const box = squadPanelRect();
+  if (!box) return;
+  const { x, y, w, h } = box;
+  hudPanel(x, y, w, h);
+
+  ctx.textAlign = 'left';
+  ctx.font = '600 9px ui-monospace, Menlo, monospace';
+  ctx.fillStyle = '#8b98ad';
+  ctx.fillText('ОТРЯД', x + 14, y + 15);
+  if (squadCmd.pending) {
+    ctx.fillStyle = '#ffc857';
+    ctx.fillText('КЛИКНИ ТОЧКУ НА КАРТЕ', x + 60, y + 15);
+  }
+
+  allies.forEach((a, i) => {
+    const ry = y + SQUAD_PANEL.head + i * SQUAD_PANEL.row + SQUAD_PANEL.pad;
+    squadHitAreas.push({ x, y: ry - 4, w, h: SQUAD_PANEL.row, act: () => selectAlly(i) });
+
+    if (a.selected) {
+      ctx.fillStyle = hexAlpha(a.stats.accent, 0.12);
+      roundRect(ctx, x + 6, ry - 4, w - 12, SQUAD_PANEL.row - 2, 6); ctx.fill();
+    }
+    // Класс — квадратной меткой цвета класса, чтобы строка читалась с одного взгляда.
+    ctx.fillStyle = a.down ? 'rgba(255,85,102,.75)' : a.stats.accent;
+    roundRect(ctx, x + 10, ry, 18, 18, 5); ctx.fill();
+    ctx.fillStyle = '#0b0f15';
+    ctx.font = '700 9px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(allyClass(a.cls).short, x + 19, ry + 12);
+
+    ctx.textAlign = 'left';
+    // Звания бывают длинные («Мл. лейтенант»), поэтому под текст отведена
+    // своя половина строки, а полоски начинаются заведомо правее.
+    ctx.font = '600 9px ui-monospace, Menlo, monospace';
+    ctx.fillStyle = a.down ? '#ff5566' : '#e9eef6';
+    ctx.fillText(`${i + 5} · ${a.stats.rank}`, x + 34, ry + 8);
+
+    ctx.fillStyle = '#8b98ad';
+    ctx.fillText(a.down ? 'ранен' : a.mode === 'revive' ? 'поднимает'
+      : a.order ? 'точка' : 'авто', x + 34, ry + 19);
+
+    const bx = x + 132, bw = w - 146;
+    if (a.down) {
+      bar(bx, ry + 4, bw, 5, 0, '#ff5566');
+    } else {
+      bar(bx, ry + 2, bw, 5, a.hp / a.hpMax, a.hp / a.hpMax > 0.35 ? '#3ddc97' : '#ff5566');
+      if (a.armorMax > 0) bar(bx, ry + 9, bw, 3, a.armor / a.armorMax, '#54a8ff');
+      if (a.shieldMax > 0) bar(bx, ry + 14, bw, 3, a.shield / a.shieldMax, a.stats.accent);
+    }
+  });
+
+  // Кнопки: выделить всех, отдать приказ, вернуть в авто.
+  const by = y + h - SQUAD_PANEL.btn - SQUAD_PANEL.pad + 2;
+  const bw = (w - 28) / 3;
+  const buttons = [
+    ['ВСЕ · 9', selectAllAllies, allies.some(a => a.selected)],
+    ['ПРИКАЗ · F', beginSquadOrder, squadCmd.pending],
+    ['АВТО · G', squadAuto, allies.every(a => !a.order)],
+  ];
+  buttons.forEach(([label, act, on], i) => {
+    const bx = x + 14 + i * (bw + 3);
+    squadHitAreas.push({ x: bx, y: by, w: bw, h: SQUAD_PANEL.btn - 4, act });
+    ctx.fillStyle = on ? 'rgba(84,168,255,.22)' : 'rgba(255,255,255,.06)';
+    roundRect(ctx, bx, by, bw, SQUAD_PANEL.btn - 4, 6); ctx.fill();
+    ctx.fillStyle = on ? '#cfe6ff' : '#8b98ad';
+    ctx.font = '700 8px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, bx + bw / 2, by + 14);
+  });
+  ctx.textAlign = 'left';
+}
+
+/** Клик по панели отряда. Возвращает true, если попал — тогда это не выстрел. */
+function squadPanelClick(mx, my) {
+  for (const a of squadHitAreas) {
+    if (mx >= a.x && mx <= a.x + a.w && my >= a.y && my <= a.y + a.h) { a.act(); return true; }
+  }
+  return false;
+}
+
 function drawHostagePanel() {
   const w = 190, h = 52, x = 18, y = 14;
   hudPanel(x, y, w, h);
@@ -4790,6 +5479,7 @@ function drawTutorialHint() {
 function drawHUD() {
   drawTopBar();
   drawHealthPanel();
+  drawSquadPanel();
   drawWeaponPanel();
   drawHostagePanel();
   drawMinimap();
@@ -4830,6 +5520,7 @@ function render() {
 
   ctx.save(); worldTransform(ctx, offX, offY);
   drawHostages(true);
+  drawAllies();
   drawPlayer();
   drawNoises();
   drawPopups();
@@ -5253,11 +5944,57 @@ const progress = {
   upgrades: {},                   // уровень прокачки ствола: id → 2…10 (нет записи — 1)
   armorOwned: [],                 // купленная броня, id из ARMOR_TYPES
   armorEquipped: null,            // надетая; null — без брони
-  tutorial: 'level1',            // level1 → arsenal → done
+  squad: [],                      // отряд: [{ cls, level }], до четырёх бойцов
+  tutorial: 'level1',            // level1 → arsenal → squad → done
 };
 
+/* ── Отряд в прогрессе ───────────────────────────────────────────────────
+   Слоты открываются по числу пройденных операций. Роспись отряда всегда
+   режется по числу открытых слотов: сохранение из будущего не даст лишних. */
+const squadSlots = () => SQUAD.SLOT_AT.filter(n => progress.completed >= n).length;
+const squadRoster = () => progress.squad.slice(0, squadSlots());
+const squadCount = cls => squadRoster().filter(a => a.cls === cls).length;
+/** На какой операции откроется следующий слот; null — все уже открыты. */
+const squadNextSlotAt = () => SQUAD.SLOT_AT.find(n => progress.completed < n) || null;
+/** Можно ли взять ещё бойца этого класса: есть свободный слот и не выбран лимит. */
+const canHire = cls => squadRoster().length < squadSlots() &&
+  squadCount(cls) < (allyClass(cls) ? allyClass(cls).max : 0);
+const allyLevel = i => clamp((progress.squad[i] || {}).level || 1, 1, SQUAD.MAX_LEVEL);
+/** Первый боец достаётся даром — им и начинается отряд. */
+const squadHirePrice = cls =>
+  (progress.squad.length === 0 && cls === SQUAD.FIRST_FREE ? 0 : allyClass(cls).price);
+
+function hireAlly(cls) {
+  const c = allyClass(cls);
+  if (!c || !canHire(cls)) { Audio2D.ui(false); return false; }
+  const price = squadHirePrice(cls);
+  if (progress.money < price) { Audio2D.ui(false); return false; }
+  addMoney(-price);
+  progress.squad.push({ cls, level: 1 });
+  saveProgress();
+  Audio2D.ui(true);
+  return true;
+}
+
+function upgradeAlly(i) {
+  const rec = progress.squad[i];
+  if (!rec || i >= squadSlots()) { Audio2D.ui(false); return false; }
+  const level = allyLevel(i);
+  const cost = allyUpgradeCost(level);
+  if (level >= SQUAD.MAX_LEVEL || progress.money < cost) { Audio2D.ui(false); return false; }
+  addMoney(-cost);
+  rec.level = level + 1;
+  saveProgress();
+  Audio2D.ui(true);
+  finishSquadTutorial();
+  return true;
+}
+
 const owns = id => progress.owned.includes(id);
-const tutorialCost = () => WEAPONS[TUTORIAL_WEAPON].price + armorOf(TUTORIAL_ARMOR).price;
+// Выплата за первую операцию доводится до цены ПП, бронежилета и первого
+// улучшения бойца: обучение проводит игрока через все три покупки.
+const tutorialCost = () => WEAPONS[TUTORIAL_WEAPON].price + armorOf(TUTORIAL_ARMOR).price +
+  allyUpgradeCost(1);
 const tutorialBought = () => owns(TUTORIAL_WEAPON) && progress.armorOwned.includes(TUTORIAL_ARMOR);
 /** Что ещё купить по обучению: сначала ствол, потом бронежилет. */
 const tutorialNextBuy = () => (!owns(TUTORIAL_WEAPON) ? WEAPONS[TUTORIAL_WEAPON].name
@@ -5309,12 +6046,24 @@ function loadProgress() {
         if (WEAPONS[id] && WEAPONS[id].slot === slot && owns(id)) progress.equipped[slot] = id;
       }
     }
+    if (Array.isArray(data.squad)) {
+      // Отряд: только известные классы, уровни 1…10 и не больше лимита по классу.
+      const taken = {};
+      progress.squad = [];
+      for (const rec of data.squad) {
+        const c = rec && allyClass(rec.cls);
+        if (!c || progress.squad.length >= SQUAD.MAX) continue;
+        if ((taken[c.id] || 0) >= c.max) continue;
+        taken[c.id] = (taken[c.id] || 0) + 1;
+        progress.squad.push({ cls: c.id, level: clamp(Math.round(rec.level) || 1, 1, SQUAD.MAX_LEVEL) });
+      }
+    }
     // Стадия обучения. В старых сохранениях её нет: там ПП выдавался даром,
     // поэтому игрок с ПП или со второй пройденной операцией обучение уже прошёл.
-    if (['level1', 'arsenal', 'done'].includes(data.tutorial)) progress.tutorial = data.tutorial;
+    if (['level1', 'arsenal', 'squad', 'done'].includes(data.tutorial)) progress.tutorial = data.tutorial;
     else progress.tutorial = owns(LEGACY_FREE_SMG) || progress.completed >= 2 ? 'done'
       : progress.completed >= 1 ? 'arsenal' : 'level1';
-    if (progress.tutorial === 'arsenal' && tutorialBought()) progress.tutorial = 'done';
+    if (progress.tutorial === 'arsenal' && tutorialBought()) progress.tutorial = 'squad';
   } catch (e) { /* без прогресса, но играть можно */ }
   applyLoadout();
 }
@@ -5330,7 +6079,7 @@ const levelUnlocked = i => i <= progress.completed && !tutorialBlocksLevel(i);
 /* ── Экраны ──────────────────────────────────────────────────────────────
    Три полноэкранных состояния поверх канваса. Меню закупки и пауза живут
    отдельно, поэтому переключаем только те, что помечены классом screen. */
-const SCREENS = ['menuScreen', 'levelScreen', 'arsenalScreen', 'levelDone'];
+const SCREENS = ['menuScreen', 'levelScreen', 'arsenalScreen', 'squadScreen', 'levelDone'];
 
 function showScreen(id) {
   for (const s of SCREENS) $(s).classList.toggle('show', s === id);
@@ -5340,12 +6089,17 @@ function showScreen(id) {
 /** Подсветка и подсказки обучения вне боя: меню ведёт в арсенал. */
 function syncTutorialUI() {
   const goArsenal = progress.tutorial === 'arsenal';
+  const goSquad = progress.tutorial === 'squad';
   $('btnArsenal').classList.toggle('pulse', goArsenal);
+  $('btnSquad').classList.toggle('pulse', goSquad);
   const hint = $('menuHint');
-  hint.hidden = !goArsenal;
+  hint.hidden = !goArsenal && !goSquad;
   if (goArsenal) hint.textContent =
     `Открой Арсенал и купи ${WEAPONS[TUTORIAL_WEAPON].name} и ${armorOf(TUTORIAL_ARMOR).name}. ` +
     `Без них следующая операция закрыта.`;
+  else if (goSquad) hint.textContent =
+    `Снаряжение есть. Теперь открой Отряд: возьми бойца и подними ему звание. ` +
+    `Без этого следующая операция закрыта.`;
   updateTutorialArrow();
 }
 
@@ -5373,8 +6127,19 @@ function tutorialArrowTarget() {
     const card = [...$('arsenalCatalog').children].find(c => c.dataset.name === tutorialNextBuy());
     return card ? card.actionButton : null;
   }
+  if (progress.tutorial === 'squad') {
+    if (screen === 'arsenalScreen') return $('btnArsenalBack');
+    if (screen === 'menuScreen') return $('btnSquad');
+    if (screen === 'levelScreen') return $('btnBackMenu');
+    if (screen !== 'squadScreen') return null;
+    // Сначала взять бесплатного бойца, потом поднять ему звание.
+    const first = $('squadList').children[0];
+    if (!first) return null;
+    return squadRoster().length === 0 ? first.actionButton : first.upgradeButton;
+  }
   if (tutorialJustDone) {
     if (screen === 'arsenalScreen') return $('btnArsenalBack');
+    if (screen === 'squadScreen') return $('btnSquadBack');
     if (screen === 'menuScreen') return $('btnPlay');
     if (screen === 'levelScreen') return levelCard(1);
   }
@@ -5392,7 +6157,8 @@ function updateTutorialArrow() {
   }
   // Обычно стрелка слева и смотрит вправо. Сверху — если слева нет места или
   // там соседняя кнопка: вкладка рядом с вкладкой, «В меню» рядом со счётом денег.
-  const down = r.left < 64 || target.classList.contains('a-tab') || target.id === 'btnArsenalBack';
+  const down = r.left < 64 || target.classList.contains('a-tab') ||
+    target.id === 'btnArsenalBack' || target.id === 'btnSquadBack';
   arrow.hidden = false;
   arrow.target = target;
   arrow.classList.toggle('down', down);
@@ -5496,14 +6262,26 @@ function weaponBars(w) {
 /** На стадии «arsenal» купить можно только ПП и бронежилет обучения: выплата
  *  ровно на них, и любая другая покупка оставила бы игрока без денег и с
  *  закрытой второй операцией. Прокачка тоже закрыта. */
-const tutorialLocksPurchase = id => progress.tutorial === 'arsenal' && id !== TUTORIAL_WEAPON && id !== TUTORIAL_ARMOR;
+const tutorialLocksPurchase = id => progress.tutorial === 'squad' ||
+  (progress.tutorial === 'arsenal' && id !== TUTORIAL_WEAPON && id !== TUTORIAL_ARMOR);
+/** Почему кнопка закрыта: до улучшения бойца арсенал целиком на паузе. */
+const tutorialLockNote = () =>
+  progress.tutorial === 'squad' ? 'Сначала отряд' : `Сначала ${tutorialNextBuy()}`;
 // Обучение только что пройдено: стрелка ведёт обратно в меню и во вторую операцию.
 let tutorialJustDone = false;
 
+/** Куплено снаряжение — обучение переходит к отряду, а не заканчивается. */
 function finishTutorialIfBought() {
   if (progress.tutorial !== 'arsenal' || !tutorialBought()) return;
+  progress.tutorial = 'squad';
+}
+
+/** Боец улучшен — обучение пройдено. */
+function finishSquadTutorial() {
+  if (progress.tutorial !== 'squad') return;
   progress.tutorial = 'done';
   tutorialJustDone = true;
+  saveProgress();
 }
 
 function buyWeapon(id) {
@@ -5566,14 +6344,14 @@ function node(tag, cls, text) {
   return e;
 }
 
-function makeCard({ name, price, desc, bars, owned, equipped, action, label, enabled, level, upgrade }) {
+function makeCard({ name, price, priceLabel, desc, bars, owned, equipped, action, label, enabled, level, upgrade }) {
   const card = node('div', 'cat-card' + (equipped ? ' equipped' : owned ? ' owned' : ''));
   card.dataset.name = name;
 
   const top = node('span', 'cc-top');
   top.appendChild(node('span', 'cc-name', name));
   if (level) top.appendChild(node('span', 'cc-level', `ур. ${level}/${UPGRADE.MAX}`));
-  top.appendChild(node('span', 'cc-price', owned ? 'куплено' : money(price)));
+  top.appendChild(node('span', 'cc-price', priceLabel || (owned ? 'куплено' : money(price))));
   card.appendChild(top);
   card.appendChild(node('span', 'cc-desc', desc));
 
@@ -5622,13 +6400,18 @@ function renderArsenal() {
       : `Обучение: здесь покупается снаряжение, и оно остаётся с тобой навсегда. ` +
         `Купи ${WEAPONS[TUTORIAL_WEAPON].name} и ${armorOf(TUTORIAL_ARMOR).name} — денег хватит на оба. ` +
         `Без них следующая операция закрыта.`;
+  } else if (progress.tutorial === 'squad') {
+    banner.hidden = false;
+    banner.classList.add('ok');
+    banner.textContent = `${WEAPONS[TUTORIAL_WEAPON].name} и ${armorOf(TUTORIAL_ARMOR).name} твои. ` +
+      `Остался последний шаг обучения: вернись в меню и открой Отряд.`;
   } else if (tutorialJustDone) {
     banner.hidden = false;
     banner.classList.add('ok');
-    banner.textContent = `Готово! ${WEAPONS[TUTORIAL_WEAPON].name} и ${armorOf(TUTORIAL_ARMOR).name} твои. ` +
-      `Возвращайся в меню — следующая операция открыта. Новое снаряжение покупай здесь за деньги с операций.`;
+    banner.textContent = `Готово! Снаряжение и отряд твои. ` +
+      `Возвращайся в меню — следующая операция открыта. Новое покупай здесь за деньги с операций.`;
   } else banner.hidden = true;
-  $('btnArsenalBack').classList.toggle('pulse', tutorialJustDone);
+  $('btnArsenalBack').classList.toggle('pulse', tutorialJustDone || progress.tutorial === 'squad');
 
   const rows = [
     ['Основное', progress.equipped.rifle ? WEAPONS[progress.equipped.rifle].name : 'нет'],
@@ -5683,7 +6466,7 @@ function renderArsenal() {
           action: () => upgradeWeapon(id),
         } : null,
         label: equipped ? 'Экипировано' : owned ? 'Экипировать'
-          : locked ? `Сначала ${tutorialNextBuy()}` : 'Купить',
+          : locked ? tutorialLockNote() : 'Купить',
         enabled: !equipped && !locked && (owned || progress.money >= w.price),
         action: () => (owned ? equipWeapon(id) : buyWeapon(id)),
       });
@@ -5702,7 +6485,7 @@ function renderArsenal() {
         name: a.name, price: a.price, desc: a.desc, bars: armorBars(a),
         owned, equipped,
         label: equipped ? 'Снять' : owned ? 'Надеть'
-          : locked ? `Сначала ${tutorialNextBuy()}` : 'Купить',
+          : locked ? tutorialLockNote() : 'Купить',
         enabled: owned || (!locked && progress.money >= a.price),
         action: () => (equipped ? equipArmor(null) : owned ? equipArmor(a.id) : buyArmor(a.id)),
       });
@@ -5715,6 +6498,119 @@ function renderArsenal() {
   }
   updateTutorialArrow();
 }
+
+/* ── Экран «Отряд» ───────────────────────────────────────────────────────
+   Карточки те же, что в арсенале: нанятые бойцы со званием и кнопкой
+   улучшения, за ними — свободные слоты с наймом по классам. */
+function allyBars(st) {
+  const maxHp = Math.max(...ALLY_CLASSES.map(c => c.hp[SQUAD.MAX_LEVEL - 1]));
+  const maxArmor = Math.max(...ARMOR_TYPES.map(a => a.points));
+  return [
+    ['Урон', st.dmg, `${Math.round(st.dmg * 100)}%`],
+    ['Защита', st.armor / maxArmor, String(st.armor)],
+    ['Прочность', st.hp / maxHp, String(st.hp)],
+    ['Кучность', clamp(1 - st.aim / ALLY_AIM[0], 0, 1), (100 - st.aim * 200).toFixed(0)],
+  ];
+}
+
+/** Строка снаряжения: что у бойца в руках и на плечах на этом уровне. */
+function allyGearLine(st) {
+  const w = WEAPONS[st.weapon];
+  const gun = st.weaponLv > 1 ? `${w.name} ур. ${st.weaponLv}` : w.name;
+  const armor = st.armor ? `броня ${st.armor}` : 'без брони';
+  const extra = st.shield ? `, щит ${st.shield}`
+    : st.heal ? `, лечит ${st.heal}` + (st.level >= SQUAD.REVIVE_LEVEL ? ' и поднимает раненого' : '')
+    : '';
+  return `${gun} · ${armor}${extra}`;
+}
+
+function renderSquad() {
+  $('squadMoney').textContent = money(progress.money);
+
+  const slots = squadSlots();
+  const roster = squadRoster();
+  const next = squadNextSlotAt();
+  $('squadSlotsNote').textContent = `Слотов ${roster.length} из ${slots}` +
+    (next ? ` · следующий откроется на операции ${next}` : ' · все слоты открыты');
+
+  const banner = $('squadTutorial');
+  banner.classList.remove('ok');
+  if (progress.tutorial === 'squad') {
+    banner.hidden = false;
+    banner.textContent = roster.length === 0
+      ? `Обучение: первый боец достаётся даром. Возьми штурмовика — он пойдёт за тобой и будет стрелять сам.`
+      : `Обучение: улучши бойца. Каждый уровень — новое оружие, броня и звание. ` +
+        `Пока не улучшишь, следующая операция закрыта.`;
+  } else if (tutorialJustDone) {
+    banner.hidden = false;
+    banner.classList.add('ok');
+    banner.textContent = `Готово! Отряд в строю. Новых бойцов и уровни покупай здесь за деньги с операций.`;
+  } else banner.hidden = true;
+  $('btnSquadBack').classList.toggle('pulse', tutorialJustDone);
+
+  const list = $('squadList');
+  list.innerHTML = '';
+
+  roster.forEach((rec, i) => {
+    const level = allyLevel(i);
+    const st = allyStats(rec.cls, level);
+    const maxed = level >= SQUAD.MAX_LEVEL;
+    const cost = allyUpgradeCost(level);
+    const card = makeCard({
+      name: `${st.rank} · ${st.name}`, price: 0, desc: allyGearLine(st),
+      priceLabel: `ур. ${level}/${SQUAD.MAX_LEVEL}`,
+      bars: allyBars(st), owned: true, equipped: false,
+      label: `Боец ${i + 1} · клавиша ${i + 5}`, enabled: false,
+      upgrade: {
+        label: maxed ? 'Максимальное звание' : `Улучшить до ${level + 1} — ${money(cost)}`,
+        enabled: !maxed && progress.money >= cost,
+        action: () => { upgradeAlly(i); renderSquad(); },
+      },
+    });
+    card.dataset.name = `ally${i}`;
+    list.appendChild(card);
+  });
+
+  // Свободные слоты: по карточке найма на каждый доступный класс.
+  if (roster.length < slots) {
+    for (const c of ALLY_CLASSES) {
+      const free = canHire(c.id);
+      const price = squadHirePrice(c.id);
+      const left = c.max - squadCount(c.id);
+      const st = allyStats(c.id, 1);
+      const card = makeCard({
+        name: c.name, price, desc: c.desc + ` · в отряде не больше ${c.max}`,
+        priceLabel: !free ? `осталось ${Math.max(0, left)}` : price === 0 ? 'бесплатно' : money(price),
+        bars: allyBars(st), owned: false, equipped: false,
+        label: !free ? `Лимит класса выбран` : price === 0 ? 'Взять в отряд — бесплатно'
+          : progress.money >= price ? 'Нанять' : 'Не хватает денег',
+        enabled: free && progress.money >= price,
+        action: () => { hireAlly(c.id); renderSquad(); },
+      });
+      card.dataset.name = 'hire-' + c.id;
+      if (progress.tutorial === 'squad' && roster.length === 0 && c.id === SQUAD.FIRST_FREE) {
+        card.classList.add('tut-target');
+        card.actionButton.classList.add('pulse');
+      }
+      list.appendChild(card);
+    }
+  } else if (!slots) {
+    const note = node('div', 'cat-card');
+    note.appendChild(node('span', 'cc-name', 'Отряд ещё не положен'));
+    note.appendChild(node('span', 'cc-desc', 'Первый боец появится после первой операции.'));
+    list.appendChild(note);
+  }
+  updateTutorialArrow();
+}
+
+function openSquad() {
+  Audio2D.init();
+  Audio2D.resume();
+  renderSquad();
+  showScreen('squadScreen');
+}
+
+const squadOpen = () => $('squadScreen').classList.contains('show');
 
 let arsenalCtx = null;
 
@@ -5905,7 +6801,7 @@ function completeLevel() {
     note.textContent = (grant > 0 ? `Командование выделило на снаряжение +${money(grant)}. `
                                   : `Выплаты за операцию хватает на снаряжение. `) +
       `Теперь выйди в меню, открой Арсенал и купи ${WEAPONS[TUTORIAL_WEAPON].name} и ` +
-      `${armorOf(TUTORIAL_ARMOR).name} — там покупается всё новое снаряжение.`;
+      `${armorOf(TUTORIAL_ARMOR).name}, а потом загляни в Отряд — там появится первый напарник.`;
   }
   $('btnDoneMenu').classList.toggle('pulse', tutorialStep);
   showScreen('levelDone');
@@ -5938,6 +6834,8 @@ function boot() {
   $('btnPlay').onclick = openLevels;
   $('btnArsenal').onclick = openArsenal;
   $('btnArsenalBack').onclick = () => showScreen('menuScreen');
+  $('btnSquad').onclick = openSquad;
+  $('btnSquadBack').onclick = () => showScreen('menuScreen');
   $('btnBackMenu').onclick = () => showScreen('menuScreen');
   $('btnDoneMenu').onclick = returnToMenu;
   $('btnNextLevel').onclick = () => startLevel(state.levelIndex + 1);
