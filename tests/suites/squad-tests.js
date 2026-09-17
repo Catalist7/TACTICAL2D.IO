@@ -396,6 +396,18 @@ function lane() {
   } catch (e) { crash = e; }
   say(!crash, crash ? 'ПАДЕНИЕ: ' + crash.message : 'кадр с выделением, приказом и раненым рисуется');
 
+  // Миникарта показывает отряд: по кружку на бойца плюс точка приказа.
+  {
+    const rec = [];
+    const realArc = ctx.arc;
+    ctx.arc = function (...args) { rec.push(ctx.fillStyle); return realArc.apply(ctx, args); };
+    drawMinimap();
+    ctx.arc = realArc;
+    const accents = ALLY_CLASSES.map(c => c.accent);
+    say(accents.some(c => rec.includes(c)), 'на миникарте видно бойцов отряда');
+    say(rec.includes('#ff5566'), 'и раненого отдельным цветом');
+  }
+
   const box = squadPanelRect();
   say(!!box && box.x >= 0 && box.y > 0, 'панель отряда помещается на экране');
   render();

@@ -5311,6 +5311,17 @@ function drawMinimap() {
       ctx.beginPath(); ctx.arc(b.x, b.y, 26, 0, TAU); ctx.fill();
     }
   }
+  // Отряд на карте: точка цвета класса, у раненого — красная.
+  for (const a of allies) {
+    if (!a.alive && !a.down) continue;
+    ctx.fillStyle = a.down ? '#ff5566' : a.stats.accent;
+    ctx.beginPath(); ctx.arc(a.x, a.y, a.down ? 20 : 24, 0, TAU); ctx.fill();
+    if (a.order) {
+      ctx.strokeStyle = hexAlpha(a.stats.accent, 0.5);
+      ctx.lineWidth = 10;
+      ctx.beginPath(); ctx.arc(a.order.x, a.order.y, 22, 0, TAU); ctx.stroke();
+    }
+  }
   if (player.alive) {
     ctx.fillStyle = COL.ct;
     ctx.beginPath(); ctx.arc(player.x, player.y, 30, 0, TAU); ctx.fill();
