@@ -101,7 +101,12 @@
         rec.defsOut.push({ id, x1, y1, r1, stops });
         return { addColorStop: (o, c) => stops.push([o, c]), __id: id };
       },
-      createLinearGradient() { return { addColorStop: noop }; },
+      createLinearGradient(x1, y1, x2, y2) {
+        const id = `l${el.__id}_${defs++}`;
+        const stops = [];
+        rec.defsOut.push({ id, linear: true, x1, y1, x2, y2, stops });
+        return { addColorStop: (o, c) => stops.push([o, c]), __id: id };
+      },
       // Вложенный холст вставляем целиком, но под текущим преобразованием —
       // иначе слой карты игнорирует камеру, а миникарта растекается на экран.
       drawImage(src, dx = 0, dy = 0, dw, dh) {
@@ -165,7 +170,10 @@
 
   globalThis.svgOf = (el, w, h, bg) => {
     const r = el.__rec;
-    const defs = r.defsOut.map(g => g.raw ? g.raw : `<radialGradient id="${g.id}" gradientUnits="userSpaceOnUse" cx="${num(g.x1)}" cy="${num(g.y1)}" r="${num(g.r1)}">` +
+    const defs = r.defsOut.map(g => g.raw ? g.raw : g.linear
+      ? `<linearGradient id="${g.id}" gradientUnits="userSpaceOnUse" x1="${num(g.x1)}" y1="${num(g.y1)}" x2="${num(g.x2)}" y2="${num(g.y2)}">` +
+        g.stops.map(([o, c]) => `<stop offset="${num(o)}" stop-color="${c}"/>`).join('') + '</linearGradient>'
+      : `<radialGradient id="${g.id}" gradientUnits="userSpaceOnUse" cx="${num(g.x1)}" cy="${num(g.y1)}" r="${num(g.r1)}">` +
       g.stops.map(([o, c]) => `<stop offset="${num(o)}" stop-color="${c}"/>`).join('') + '</radialGradient>').join('');
     return `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">` +
       `<defs>${defs}</defs><rect width="100%" height="100%" fill="${bg}"/>${r.out.join('')}</svg>`;
