@@ -12,7 +12,7 @@ const hsl = hex => {
   const s = mx === mn ? 0 : (mx - mn) / (1 - Math.abs(2 * l - 1));
   return { s, l };
 };
-say(CFG.SHADOW === 0.8, `тень вне поля зрения гуще: ${CFG.SHADOW * 100}% (было 62%)`);
+say(CFG.SHADOW > 0.62 && CFG.SHADOW < 0.8, `тень вне поля зрения гуще исходной, но чуть светлее прошлой: ${Math.round(CFG.SHADOW * 100)}% (было 62%, потом 80%)`);
 say(CFG.LIGHT_CUT > 0 && CFG.LIGHT_CUT < 1, `свет из окон снимает ${CFG.LIGHT_CUT * 100}% тени`);
 {
   const drab = ['floorIn', 'floorOut', 'wall', 'wallTop', 'wallEdge', 'crate', 'crateTop'];
@@ -181,7 +181,8 @@ say(totalBreaches > 0, `проломы тоже встречаются: ${totalB
     if (placed) break;
   }
   say(placed, 'нашлась точка в луче, видная из глубины помещения');
-  const count = () => { let n = 0; const real = drawOperative; drawOperative = () => { n++; }; drawBots(); drawOperative = real; return n; };
+  // Считаем только саму фигуру: контур врага рисуется отдельным проходом.
+  const count = () => { let n = 0; const real = drawOperative; drawOperative = (c, e, o) => { if (!o.outline) n++; }; drawBots(); drawOperative = real; return n; };
   const toBot = Math.atan2(bot.y - player.y, bot.x - player.x);
   player.ang = toBot + Math.PI;                      // спиной к врагу
   say(!playerSees(bot.x, bot.y) && count() === 0, 'враг в луче света за спиной игрока не рисуется');
@@ -204,4 +205,63 @@ say(totalBreaches > 0, `проломы тоже встречаются: ${totalB
   say(a.length >= DECAY.MOTES && a.length % DECAY.MOTES === 0, `в лучах в кадре пылинки: ${a.length}`);
   say(a.join() !== b.join(), 'пылинки плывут со временем');
   say(off.length === 0, 'лучи за кадром не тратят ни одного вызова');
+}
+
+// ── Чуть светлее ─────────────────────────────────────────────────────────
+{
+  const was = { floorIn: '#4f4c47', wall: '#5d5b56', crate: '#675641' };
+  say(Object.keys(was).every(k => hsl(COL[k]).l > hsl(was[k]).l && hsl(COL[k]).l < 0.45),
+      `пол, стены и ящики светлее прошлого варианта: ${Object.keys(was).map(k => `${k} ${hsl(was[k]).l.toFixed(2)}→${hsl(COL[k]).l.toFixed(2)}`).join(', ')}`);
+}
+
+// ── Красная обводка врагов ───────────────────────────────────────────────
+{
+  startLevel(0); beginLive();
+  bots.forEach(b => { b.alive = false; }); hostages.forEach(h => { h.alive = false; });
+  let spot = null;
+  for (let ty = 2; ty < MAP_H - 2 && !spot; ty++)
+    for (let tx = 2; tx < MAP_W - 6 && !spot; tx++) {
+      let ok = true;
+      for (let i = 0; i < 5; i++) if (!walkable(tx + i, ty)) ok = false;
+      if (ok) spot = { x: (tx + .5) * T, y: (ty + .5) * T };
+    }
+  const bot = bots[0];
+  Object.assign(bot, { alive: true, x: spot.x + 3 * T, y: spot.y, lastHurt: 0.3 });
+  Object.assign(player, { alive: true, x: spot.x, y: spot.y, ang: 0 });
+  say(playerSees(bot.x, bot.y), 'враг в поле зрения');
+
+  const log = [];
+  const real = { fill: ctx.fill, stroke: ctx.stroke, fillRect: ctx.fillRect, op: drawOperative };
+  let pass = null;
+  drawOperative = (c, e, o) => { pass = o.outline ? 'outline' : 'normal'; real.op(c, e, o); };
+  ctx.fill = () => log.push({ pass, kind: 'fill', color: ctx.fillStyle, alpha: ctx.globalAlpha, lw: ctx.lineWidth });
+  ctx.stroke = () => log.push({ pass, kind: 'stroke', color: ctx.strokeStyle, alpha: ctx.globalAlpha, lw: ctx.lineWidth });
+  ctx.fillRect = () => log.push({ pass, kind: 'fillRect', color: ctx.fillStyle, alpha: ctx.globalAlpha });
+  drawBots();
+  const outline = log.filter(l => l.pass === 'outline'), normal = log.filter(l => l.pass === 'normal');
+  say(outline.length > 0 && log.indexOf(outline[0]) < log.indexOf(normal[0]) &&
+      log.indexOf(outline[outline.length - 1]) < log.indexOf(normal[0]),
+      `сначала контур, потом фигура: ${outline.length} + ${normal.length} вызовов`);
+  say(hsl(COL.enemyOutline).s > 0.8 && parseInt(COL.enemyOutline.slice(1, 3), 16) > 200,
+      `цвет контура — ярко-красный ${COL.enemyOutline}`);
+  say(outline.every(l => l.color === COL.enemyOutline && l.alpha === 1), 'весь контур сплошной красный, без прозрачности');
+  const fills = arr => arr.filter(l => l.kind === 'fill').length;
+  say(fills(outline) === fills(normal) - 2,
+      'тень под ногами и вспышка ранения в контур не попадают');
+  say(outline.filter(l => l.kind !== 'fillRect').every(l => l.lw >= CFG.ENEMY_OUTLINE * 2),
+      `контур шире фигуры на ${CFG.ENEMY_OUTLINE} с каждой стороны`);
+
+  log.length = 0;
+  hostages.forEach(h => { h.alive = true; h.x = spot.x + T; h.y = spot.y; });
+  pass = 'hostage'; drawHostages(false); drawHostages(true);
+  pass = 'player'; real.op(ctx, player, { weapon: 'usp' });
+  say(log.every(l => l.color !== COL.enemyOutline), 'у заложников и игрока обводки нет');
+
+  log.length = 0;
+  player.ang = Math.PI;
+  drawBots();
+  say(log.length === 0, 'враг вне поля зрения не рисуется вовсе — и контура нет');
+
+  Object.assign(ctx, { fill: real.fill, stroke: real.stroke, fillRect: real.fillRect });
+  drawOperative = real.op;
 }

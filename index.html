@@ -158,6 +158,14 @@
   .tut-note{margin:0 22px 14px;padding:11px 14px;border-radius:10px;border:1px solid #5a4a1e;
     background:rgba(255,200,87,.08);color:#ffe3a3;font-size:13px;line-height:1.5}
   .cat-card.tut-target{border-color:#ffc857}
+  /* Стрелка обучения: показывает, куда нажать. Сама кликов не ловит. */
+  .tut-arrow{position:fixed;z-index:60;width:44px;height:30px;pointer-events:none;
+    filter:drop-shadow(0 2px 6px rgba(0,0,0,.6));animation:tutPoint .9s ease-in-out infinite}
+  .tut-arrow svg{display:block;width:100%;height:100%}
+  .tut-arrow.down svg{transform:rotate(90deg)}
+  .tut-arrow.down{animation-name:tutPointDown}
+  @keyframes tutPoint{0%,100%{transform:translateX(0)}50%{transform:translateX(-9px)}}
+  @keyframes tutPointDown{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
 
   .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:11px;padding:18px 22px}
   .stat{padding:12px 14px;border-radius:10px;background:#0c121b;border:1px solid var(--line)}
@@ -264,6 +272,9 @@
 </div>
 
 <button class="exit-btn" id="btnExitMatch" hidden>Меню</button>
+<div class="tut-arrow" id="tutArrow" hidden aria-hidden="true">
+  <svg viewBox="0 0 44 30"><path d="M2 11h24V3l16 12-16 12v-8H2z" fill="#ffc857" stroke="#3a2a06" stroke-width="2" stroke-linejoin="round"/></svg>
+</div>
 
 <div id="exitConfirm" class="overlay">
   <div class="scrim"></div>
@@ -306,7 +317,8 @@ const CFG = {
   FOV: 102 * Math.PI / 180,     // ширина конуса зрения игрока
   VIEW_DIST: 560,               // дальность зрения
   RAYS: 260,                    // лучей на построение полигона видимости
-  SHADOW: 0.8,                  // насколько затемнено всё вне поля зрения
+  SHADOW: 0.74,                 // насколько затемнено всё вне поля зрения
+  ENEMY_OUTLINE: 1.4,           // толщина красной обводки врагов, в единицах мира
   LIGHT_CUT: 0.5,               // свет из окон снимает такую долю этой тени
   PERIPHERAL: 74,               // круговой обзор вплотную (спиной тоже чувствуешь)
 
@@ -2973,10 +2985,13 @@ function drawOperative(c, e, opts = {}) {
   c.save();
   c.translate(e.x, e.y);
 
-  c.fillStyle = 'rgba(0,0,0,.32)';
-  c.beginPath(); c.ellipse(r * 0.18, r * 0.24, r * 1.0, r * 0.88, 0, 0, TAU); c.fill();
+  // Тень под ногами и вспышка ранения — не часть силуэта, в контур не идут.
+  if (!opts.outline) {
+    c.fillStyle = 'rgba(0,0,0,.32)';
+    c.beginPath(); c.ellipse(r * 0.18, r * 0.24, r * 1.0, r * 0.88, 0, 0, TAU); c.fill();
+  }
 
-  if (e.lastHurt > 0) {
+  if (e.lastHurt > 0 && !opts.outline) {
     c.globalAlpha = clamp(e.lastHurt * 2, 0, .6);
     c.fillStyle = '#ff5566';
     c.beginPath(); c.arc(0, 0, r + 7, 0, TAU); c.fill();
@@ -3105,10 +3120,10 @@ const COL = {
   // Заброшенное здание: грязный бетон, облупленные стены, выцветшее дерево.
   // Помещения различаются едва заметным налётом (ROOM_TINT), а яркими остаются
   // только разметка, зона эвакуации и сами бойцы.
-  floorIn: '#4f4c47', floorOut: '#4b4f44', grid: 'rgba(255,255,255,.035)',
-  wall: '#5d5b56', wallTop: '#76736c', wallEdge: '#8f8b83',
-  crate: '#675641', crateTop: '#7d6a52',
-  ct: '#54a8ff', t: '#ff7a45', hostage: '#ffd479',
+  floorIn: '#5a5751', floorOut: '#565a4e', grid: 'rgba(255,255,255,.035)',
+  wall: '#68665f', wallTop: '#827f77', wallEdge: '#9a968d',
+  crate: '#71604a', crateTop: '#88755c',
+  ct: '#54a8ff', t: '#ff7a45', hostage: '#ffd479', enemyOutline: '#ff2e3a',
   rescue: '#3ddc97',
   mark: '#f2c33d', markDark: '#1e2432', guide: '#3ddcd0', hazard: '#e35d55',
 };
@@ -4130,11 +4145,38 @@ function drawBots() {
     const seen = playerSees(b.x, b.y) || state.debug;
     if (!seen) continue;
     const bw = WEAPONS[b.weapon];
-    drawOperative(ctx, b, {
+    const opts = {
       weapon: b.weapon,
       reloadT: b.reloading > 0 ? clamp(b.reloading / bw.reload, 0, 1) : 0,
-    });
+    };
+    // Сначала красный силуэт чуть шире фигуры, поверх — сама фигура: остаётся контур.
+    drawOperative(outlineContext(ctx, COL.enemyOutline, CFG.ENEMY_OUTLINE), b, { ...opts, outline: true });
+    drawOperative(ctx, b, opts);
   }
+}
+
+/** Обёртка контекста для контура: любая заливка и линия становятся сплошным
+ *  цветом контура и раздуваются на width во все стороны. Фигура, нарисованная
+ *  через неё, — это силуэт со всем снаряжением и оружием, без правок моделей. */
+function outlineContext(c, color, width) {
+  const grow = paint => {
+    c.save();
+    c.globalAlpha = 1;
+    c.fillStyle = color; c.strokeStyle = color;
+    c.lineJoin = 'round'; c.lineCap = 'round';
+    paint();
+    c.restore();
+  };
+  return new Proxy(c, {
+    get(t, k) {
+      if (k === 'fill') return () => grow(() => { t.lineWidth = width * 2; t.fill(); t.stroke(); });
+      if (k === 'stroke') return () => { const lw = t.lineWidth; grow(() => { t.lineWidth = lw + width * 2; t.stroke(); }); };
+      if (k === 'fillRect') return (x, y, w, h) => grow(() => { t.lineWidth = width * 2; t.fillRect(x, y, w, h); t.strokeRect(x, y, w, h); });
+      const v = t[k];
+      return typeof v === 'function' ? v.bind(t) : v;
+    },
+    set(t, k, v) { t[k] = v; return true; },
+  });
 }
 
 function drawPlayer() {
@@ -4720,6 +4762,7 @@ function loop(now) {
   }
   render();
   if (arsenalOpen()) drawArsenalFigure();
+  updateTutorialArrow();
   mouse.clicked = false;
 }
 
@@ -5103,7 +5146,11 @@ const PROGRESS_KEY = 'tactical2d.progress';
 /** Всё, что переживает перезапуск: пройденные операции, кошелёк, купленное
  *  оружие, экипировка и стадия обучения. Бесплатно выдаются только нож и USP. */
 const STARTER = ['knife', 'usp'];
-const TUTORIAL_WEAPON = 'mp5';   // его обучение заставляет купить после первой операции
+// После первой операции обучение заставляет купить самый дешёвый ПП и самый
+// дешёвый бронежилет — доплата за операцию ровно на оба.
+const TUTORIAL_WEAPON = 'mac10';
+const TUTORIAL_ARMOR = 'kevlar';
+const LEGACY_FREE_SMG = 'mp5';   // в старых сохранениях ПП выдавался даром: такие игроки обучение прошли
 const progress = {
   completed: 0,
   money: 0,
@@ -5116,6 +5163,11 @@ const progress = {
 };
 
 const owns = id => progress.owned.includes(id);
+const tutorialCost = () => WEAPONS[TUTORIAL_WEAPON].price + armorOf(TUTORIAL_ARMOR).price;
+const tutorialBought = () => owns(TUTORIAL_WEAPON) && progress.armorOwned.includes(TUTORIAL_ARMOR);
+/** Что ещё купить по обучению: сначала ствол, потом бронежилет. */
+const tutorialNextBuy = () => (!owns(TUTORIAL_WEAPON) ? WEAPONS[TUTORIAL_WEAPON].name
+  : !progress.armorOwned.includes(TUTORIAL_ARMOR) ? armorOf(TUTORIAL_ARMOR).name : null);
 const weaponLevel = id => clamp(progress.upgrades[id] || 1, 1, UPGRADE.MAX);
 /** Цена следующего уровня: 10% цены ствола × текущий уровень, до десятков. */
 const upgradeCost = id => Math.round(WEAPONS[id].price * UPGRADE.COST * weaponLevel(id) / 10) * 10;
@@ -5166,9 +5218,9 @@ function loadProgress() {
     // Стадия обучения. В старых сохранениях её нет: там ПП выдавался даром,
     // поэтому игрок с ПП или со второй пройденной операцией обучение уже прошёл.
     if (['level1', 'arsenal', 'done'].includes(data.tutorial)) progress.tutorial = data.tutorial;
-    else progress.tutorial = owns(TUTORIAL_WEAPON) || progress.completed >= 2 ? 'done'
+    else progress.tutorial = owns(LEGACY_FREE_SMG) || progress.completed >= 2 ? 'done'
       : progress.completed >= 1 ? 'arsenal' : 'level1';
-    if (progress.tutorial !== 'done' && owns(TUTORIAL_WEAPON)) progress.tutorial = 'done';
+    if (progress.tutorial === 'arsenal' && tutorialBought()) progress.tutorial = 'done';
   } catch (e) { /* без прогресса, но играть можно */ }
   applyLoadout();
 }
@@ -5198,7 +5250,60 @@ function syncTutorialUI() {
   const hint = $('menuHint');
   hint.hidden = !goArsenal;
   if (goArsenal) hint.textContent =
-    `Открой Арсенал и купи ${WEAPONS[TUTORIAL_WEAPON].name}. Без пистолета-пулемёта следующая операция закрыта.`;
+    `Открой Арсенал и купи ${WEAPONS[TUTORIAL_WEAPON].name} и ${armorOf(TUTORIAL_ARMOR).name}. ` +
+    `Без них следующая операция закрыта.`;
+  updateTutorialArrow();
+}
+
+/* ── Стрелка обучения ─────────────────────────────────────────────────────
+   Вне боя, пока идёт обучение, стрелка показывает следующее нажатие:
+   Играть → первая операция → (победа) В меню → Арсенал → вкладка ПП →
+   купить ПП → вкладка Броня → купить бронежилет → В меню → Играть →
+   вторая операция. */
+function tutorialArrowTarget() {
+  if (state.running) return null;
+  const screen = SCREENS.find(id => $(id).classList.contains('show'));
+  const levelCard = i => $('levelList').children[i] || null;
+  if (progress.tutorial === 'level1') {
+    if (screen === 'menuScreen') return $('btnPlay');
+    if (screen === 'levelScreen') return levelCard(0);
+    return null;
+  }
+  if (progress.tutorial === 'arsenal') {
+    if (screen === 'levelDone') return $('btnDoneMenu');
+    if (screen === 'menuScreen') return $('btnArsenal');
+    if (screen === 'levelScreen') return $('btnBackMenu');
+    if (screen !== 'arsenalScreen') return null;
+    const tab = tutorialTab();
+    if (arsenalTab !== tab) return [...$('arsenalTabs').children].find(b => b.dataset.tab === tab) || null;
+    const card = [...$('arsenalCatalog').children].find(c => c.dataset.name === tutorialNextBuy());
+    return card ? card.actionButton : null;
+  }
+  if (tutorialJustDone) {
+    if (screen === 'arsenalScreen') return $('btnArsenalBack');
+    if (screen === 'menuScreen') return $('btnPlay');
+    if (screen === 'levelScreen') return levelCard(1);
+  }
+  return null;
+}
+
+function updateTutorialArrow() {
+  const arrow = $('tutArrow');
+  const target = tutorialArrowTarget();
+  const r = target && target.getBoundingClientRect();
+  if (!target || !r.width || !r.height) {
+    arrow.hidden = true;
+    arrow.target = null;
+    return;
+  }
+  // Обычно стрелка слева и смотрит вправо. Сверху — если слева нет места или
+  // там соседняя кнопка: вкладка рядом с вкладкой, «В меню» рядом со счётом денег.
+  const down = r.left < 64 || target.classList.contains('a-tab') || target.id === 'btnArsenalBack';
+  arrow.hidden = false;
+  arrow.target = target;
+  arrow.classList.toggle('down', down);
+  arrow.style.left = `${Math.round(down ? r.left + r.width / 2 - 22 : r.left - 52)}px`;
+  arrow.style.top = `${Math.round(down ? r.top - 38 : r.top + r.height / 2 - 15)}px`;
 }
 
 function renderLevels() {
@@ -5263,6 +5368,8 @@ const CATALOG = [
   { tab: 'armor',    label: 'Броня',       armor: true },
 ];
 const tabOfWeapon = id => (CATALOG.find(t => t.ids && t.ids.includes(id)) || CATALOG[0]).tab;
+/** Вкладка следующей покупки обучения: сначала ПП, потом броня. */
+const tutorialTab = () => (owns(TUTORIAL_WEAPON) ? 'armor' : tabOfWeapon(TUTORIAL_WEAPON));
 // Открытая вкладка живёт до перезагрузки страницы: вернулся в арсенал — там же, где был.
 let arsenalTab = CATALOG[0].tab;
 
@@ -5292,21 +5399,25 @@ function weaponBars(w) {
   ];
 }
 
-/** На стадии «arsenal» купить можно только ПП: выплата за обучение ровно
- *  на него, и любая другая покупка оставила бы игрока без денег и с
- *  закрытой второй операцией. */
-const tutorialLocksPurchase = id => progress.tutorial === 'arsenal' && id !== TUTORIAL_WEAPON;
+/** На стадии «arsenal» купить можно только ПП и бронежилет обучения: выплата
+ *  ровно на них, и любая другая покупка оставила бы игрока без денег и с
+ *  закрытой второй операцией. Прокачка тоже закрыта. */
+const tutorialLocksPurchase = id => progress.tutorial === 'arsenal' && id !== TUTORIAL_WEAPON && id !== TUTORIAL_ARMOR;
+// Обучение только что пройдено: стрелка ведёт обратно в меню и во вторую операцию.
 let tutorialJustDone = false;
+
+function finishTutorialIfBought() {
+  if (progress.tutorial !== 'arsenal' || !tutorialBought()) return;
+  progress.tutorial = 'done';
+  tutorialJustDone = true;
+}
 
 function buyWeapon(id) {
   const w = WEAPONS[id];
   if (owns(id) || progress.money < w.price || tutorialLocksPurchase(id)) { Audio2D.ui(false); return; }
   addMoney(-w.price);
   progress.owned.push(id);
-  if (progress.tutorial === 'arsenal' && id === TUTORIAL_WEAPON) {
-    progress.tutorial = 'done';
-    tutorialJustDone = true;
-  }
+  finishTutorialIfBought();
   equipWeapon(id);
 }
 
@@ -5334,11 +5445,12 @@ function equipWeapon(id) {
 
 function buyArmor(id) {
   const a = armorOf(id);
-  if (!a || ownsArmor(id) || progress.money < a.price || tutorialLocksPurchase('armor')) {
+  if (!a || ownsArmor(id) || progress.money < a.price || tutorialLocksPurchase(id)) {
     Audio2D.ui(false); return;
   }
   addMoney(-a.price);
   progress.armorOwned.push(id);
+  finishTutorialIfBought();
   equipArmor(id);
 }
 
@@ -5362,6 +5474,7 @@ function node(tag, cls, text) {
 
 function makeCard({ name, price, desc, bars, owned, equipped, action, label, enabled, level, upgrade }) {
   const card = node('div', 'cat-card' + (equipped ? ' equipped' : owned ? ' owned' : ''));
+  card.dataset.name = name;
 
   const top = node('span', 'cc-top');
   top.appendChild(node('span', 'cc-name', name));
@@ -5410,13 +5523,16 @@ function renderArsenal() {
   banner.classList.remove('ok');
   if (progress.tutorial === 'arsenal') {
     banner.hidden = false;
-    banner.textContent = `Обучение: здесь покупается оружие, и оно остаётся с тобой навсегда. ` +
-      `Купи ${WEAPONS[TUTORIAL_WEAPON].name} — денег как раз хватит. Без него следующая операция закрыта.`;
+    banner.textContent = owns(TUTORIAL_WEAPON)
+      ? `${WEAPONS[TUTORIAL_WEAPON].name} куплен. Теперь открой вкладку «Броня» и купи ${armorOf(TUTORIAL_ARMOR).name}.`
+      : `Обучение: здесь покупается снаряжение, и оно остаётся с тобой навсегда. ` +
+        `Купи ${WEAPONS[TUTORIAL_WEAPON].name} и ${armorOf(TUTORIAL_ARMOR).name} — денег хватит на оба. ` +
+        `Без них следующая операция закрыта.`;
   } else if (tutorialJustDone) {
     banner.hidden = false;
     banner.classList.add('ok');
-    banner.textContent = `Готово! ${WEAPONS[TUTORIAL_WEAPON].name} в руках. ` +
-      `Возвращайся в меню — следующая операция открыта. Новое оружие покупай здесь за деньги с операций.`;
+    banner.textContent = `Готово! ${WEAPONS[TUTORIAL_WEAPON].name} и ${armorOf(TUTORIAL_ARMOR).name} твои. ` +
+      `Возвращайся в меню — следующая операция открыта. Новое снаряжение покупай здесь за деньги с операций.`;
   } else banner.hidden = true;
   $('btnArsenalBack').classList.toggle('pulse', tutorialJustDone);
 
@@ -5442,7 +5558,7 @@ function renderArsenal() {
     b.role = 'tab';
     b.ariaSelected = String(on);
     b.dataset.tab = t.tab;
-    if (!on && progress.tutorial === 'arsenal' && t.tab === tabOfWeapon(TUTORIAL_WEAPON)) b.classList.add('pulse');
+    if (!on && progress.tutorial === 'arsenal' && t.tab === tutorialTab()) b.classList.add('pulse');
     b.onclick = () => {
       if (arsenalTab === t.tab) return;
       arsenalTab = t.tab;
@@ -5473,11 +5589,11 @@ function renderArsenal() {
           action: () => upgradeWeapon(id),
         } : null,
         label: equipped ? 'Экипировано' : owned ? 'Экипировать'
-          : locked ? `Сначала ${WEAPONS[TUTORIAL_WEAPON].name}` : 'Купить',
+          : locked ? `Сначала ${tutorialNextBuy()}` : 'Купить',
         enabled: !equipped && !locked && (owned || progress.money >= w.price),
         action: () => (owned ? equipWeapon(id) : buyWeapon(id)),
       });
-      if (progress.tutorial === 'arsenal' && id === TUTORIAL_WEAPON) {
+      if (progress.tutorial === 'arsenal' && id === TUTORIAL_WEAPON && !owned) {
         card.classList.add('tut-target');
         card.actionButton.classList.add('pulse');
       }
@@ -5487,17 +5603,23 @@ function renderArsenal() {
     for (const a of ARMOR_TYPES) {
       const owned = ownsArmor(a.id);
       const equipped = progress.armorEquipped === a.id;
-      const locked = !owned && tutorialLocksPurchase('armor');
-      cat.appendChild(makeCard({
+      const locked = !owned && tutorialLocksPurchase(a.id);
+      const card = makeCard({
         name: a.name, price: a.price, desc: a.desc, bars: armorBars(a),
         owned, equipped,
         label: equipped ? 'Снять' : owned ? 'Надеть'
-          : locked ? `Сначала ${WEAPONS[TUTORIAL_WEAPON].name}` : 'Купить',
+          : locked ? `Сначала ${tutorialNextBuy()}` : 'Купить',
         enabled: owned || (!locked && progress.money >= a.price),
         action: () => (equipped ? equipArmor(null) : owned ? equipArmor(a.id) : buyArmor(a.id)),
-      }));
+      });
+      if (progress.tutorial === 'arsenal' && a.id === TUTORIAL_ARMOR && !owned) {
+        card.classList.add('tut-target');
+        card.actionButton.classList.add('pulse');
+      }
+      cat.appendChild(card);
     }
   }
+  updateTutorialArrow();
 }
 
 let arsenalCtx = null;
@@ -5545,8 +5667,8 @@ const arsenalOpen = () => $('arsenalScreen').classList.contains('show');
 function openArsenal() {
   Audio2D.init();
   Audio2D.resume();
-  // Обучение ведёт сразу на вкладку того ствола, который надо купить.
-  if (progress.tutorial === 'arsenal') arsenalTab = tabOfWeapon(TUTORIAL_WEAPON);
+  // Обучение ведёт сразу на вкладку того, что надо купить.
+  if (progress.tutorial === 'arsenal') arsenalTab = tutorialTab();
   renderArsenal();
   showScreen('arsenalScreen');
 }
@@ -5618,6 +5740,7 @@ function startLevel(i) {
   state.levelIndex = i;
   state.levelWins = 0;
   state.levelDone = false;
+  tutorialJustDone = false;          // вышел в следующую операцию — стрелки больше не нужны
   CFG.MAP = lv.map;
   loadMap(lv.map, lv.enemies);
 
@@ -5647,12 +5770,12 @@ function completeLevel() {
   const payout = (firstClear ? CFG.PAY_FIRST_CLEAR : CFG.PAY_REPLAY) + rescued * CFG.PAY_HOSTAGE;
   addMoney(payout);                       // saveProgress внутри
 
-  // Первая операция в обучении: доплачиваем ровно до цены ПП и ведём в арсенал.
+  // Первая операция в обучении: доплачиваем до цены ПП и бронежилета и ведём в арсенал.
   let grant = 0;
   const tutorialStep = i === 0 && progress.tutorial === 'level1';
   if (tutorialStep) {
     progress.tutorial = 'arsenal';
-    grant = Math.max(0, WEAPONS[TUTORIAL_WEAPON].price - progress.money);
+    grant = Math.max(0, tutorialCost() - progress.money);
     addMoney(grant);                      // и сохраняет новую стадию
   }
   tutorialRun = null;
@@ -5687,8 +5810,8 @@ function completeLevel() {
     // Выплаты за операцию обычно хватает и так — тогда доплаты нет и хвастаться нечем.
     note.textContent = (grant > 0 ? `Командование выделило на снаряжение +${money(grant)}. `
                                   : `Выплаты за операцию хватает на снаряжение. `) +
-      `Теперь выйди в меню, открой Арсенал и купи ${WEAPONS[TUTORIAL_WEAPON].name} — ` +
-      `там покупается всё новое оружие.`;
+      `Теперь выйди в меню, открой Арсенал и купи ${WEAPONS[TUTORIAL_WEAPON].name} и ` +
+      `${armorOf(TUTORIAL_ARMOR).name} — там покупается всё новое снаряжение.`;
   }
   $('btnDoneMenu').classList.toggle('pulse', tutorialStep);
   showScreen('levelDone');
@@ -5719,7 +5842,7 @@ function boot() {
 
   $('btnPlay').onclick = openLevels;
   $('btnArsenal').onclick = openArsenal;
-  $('btnArsenalBack').onclick = () => { tutorialJustDone = false; showScreen('menuScreen'); };
+  $('btnArsenalBack').onclick = () => showScreen('menuScreen');
   $('btnBackMenu').onclick = () => showScreen('menuScreen');
   $('btnDoneMenu').onclick = returnToMenu;
   $('btnNextLevel').onclick = () => startLevel(state.levelIndex + 1);
