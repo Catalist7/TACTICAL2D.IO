@@ -1358,11 +1358,11 @@ const SQUAD = {
   MAX: 4,                       // больше четырёх бойцов не бывает
   SLOT_AT: [1, 2, 4, 6],        // слот открыт, когда пройдено столько операций
   FIRST_FREE: 'assault',        // первый боец выдаётся даром
-  FOLLOW: 150,                  // радиус строя вокруг игрока
-  FOLLOW_RUN: 260,              // дальше — бежит догонять
-  FOLLOW_STOP: 70,              // ближе — стоит на месте
-  LEASH: 260,                   // в бою не отходит от своей точки строя дальше
-  ENGAGE: 520,                  // дальность, на которой берёт цель
+  FOLLOW: 95,                   // радиус строя вокруг игрока — идут вплотную
+  FOLLOW_RUN: 190,              // дальше — бежит догонять
+  FOLLOW_STOP: 45,              // ближе — стоит на месте
+  LEASH: 200,                   // в бою не отходит от своей точки строя дальше
+  ENGAGE: 620,                  // дальность, на которой сам замечает цель
   SPEED: 150,                   // чуть быстрее бота, чтобы не отставать
   STEP_ASIDE: 34,               // ближе — отходит вбок, чтобы не стоять перед игроком
   HEAL_CD: 6,                   // пауза между импульсами лечения, с
@@ -1385,33 +1385,35 @@ const allyUpgradeCost = level => SQUAD_COST[clamp(level, 1, SQUAD.MAX_LEVEL) - 1
 
 // Броня по уровням — общая для всех классов, у щитоносца десятый уровень тяжелее.
 const ALLY_ARMOR = [0, 0, 50, 100, 100, 130, 130, 180, 180, 250];
-// Разброс и задержка реакции: даже генерал целится хуже игрока.
-const ALLY_AIM = [0.30, 0.28, 0.25, 0.23, 0.20, 0.18, 0.16, 0.14, 0.12, 0.10];
-const ALLY_REACT = [1.20, 1.12, 1.04, 0.97, 0.89, 0.81, 0.74, 0.66, 0.58, 0.50];
+// Разброс и задержка реакции. Рядовой целится точнее рядового террориста
+// (0.18 против 0.22) и реагирует вдвое быстрее — дуэль один на один он
+// выигрывает с первого уровня. Игроку союзник всё равно уступает.
+const ALLY_AIM = [0.120, 0.112, 0.105, 0.097, 0.090, 0.082, 0.075, 0.065, 0.055, 0.045];
+const ALLY_REACT = [0.70, 0.66, 0.62, 0.58, 0.54, 0.50, 0.46, 0.42, 0.38, 0.34];
 
 const ALLY_CLASSES = [
   { id: 'assault', name: 'Штурмовик', short: 'ШТ', max: 2, price: 2500, accent: '#54a8ff',
     desc: 'Основная огневая сила отряда: идёт рядом и бьёт по всему, что видит',
-    hp:     [90, 94, 98, 102, 106, 110, 114, 118, 122, 126],
-    dmg:    [.55, .58, .61, .64, .67, .70, .73, .76, .78, .80],
+    hp:     [110, 114, 118, 122, 126, 130, 134, 138, 144, 150],
+    dmg:    [.72, .74, .76, .78, .80, .82, .84, .86, .88, .90],
     armor:  ALLY_ARMOR,
-    guns:   ['glock', 'p250', 'mac10', 'ump45', 'mp5', 'galil', 'famas', 'ak', 'm4', 'aug'],
+    guns:   ['p250', 'mac10', 'ump45', 'mp5', 'galil', 'famas', 'ak', 'm4', 'm4', 'aug'],
     gunLv:  [1, 1, 2, 3, 4, 5, 5, 6, 7, 7] },
   { id: 'medic', name: 'Медик', short: 'МД', max: 1, price: 3500, accent: '#3ddc97',
     desc: 'Лечит отряд на ходу. С пятого уровня поднимает одного раненого за раунд',
-    hp:     [85, 89, 93, 97, 100, 104, 108, 112, 116, 120],
-    dmg:    [.45, .47, .49, .51, .54, .56, .58, .60, .63, .65],
+    hp:     [100, 104, 108, 112, 116, 120, 124, 128, 131, 135],
+    dmg:    [.60, .62, .64, .66, .68, .70, .72, .74, .76, .78],
     armor:  ALLY_ARMOR,
-    guns:   ['glock', 'glock', 'p250', 'p250', 'mac10', 'mac10', 'mac10', 'mp5', 'mp5', 'mp5'],
-    gunLv:  [1, 1, 1, 2, 2, 3, 3, 4, 5, 6],
+    guns:   ['p250', 'p250', 'mac10', 'mac10', 'ump45', 'ump45', 'mp5', 'mp5', 'mp5', 'mp5'],
+    gunLv:  [1, 2, 2, 3, 3, 4, 4, 5, 6, 7],
     heal:   [14, 16, 18, 20, 22, 24, 26, 28, 30, 32] },
   { id: 'shield', name: 'Щитоносец', short: 'ЩТ', max: 1, price: 4000, accent: '#ffc857',
     desc: 'Идёт первым и держит щит: урон спереди уходит в щит, а не в отряд',
-    hp:     [110, 114, 119, 123, 128, 132, 137, 141, 146, 150],
-    dmg:    [.40, .42, .44, .47, .49, .51, .53, .56, .58, .60],
+    hp:     [130, 134, 139, 143, 148, 152, 157, 161, 166, 170],
+    dmg:    [.55, .57, .59, .61, .63, .66, .68, .70, .72, .75],
     armor:  [0, 0, 50, 100, 100, 130, 130, 180, 180, 350],
-    guns:   ['glock', 'glock', 'p250', 'p250', 'usp', 'usp', 'fiveseven', 'fiveseven', 'deagle', 'deagle'],
-    gunLv:  [1, 1, 1, 2, 2, 3, 3, 4, 5, 6],
+    guns:   ['p250', 'p250', 'usp', 'usp', 'fiveseven', 'fiveseven', 'deagle', 'deagle', 'deagle', 'deagle'],
+    gunLv:  [1, 2, 2, 3, 3, 4, 4, 5, 6, 7],
     shield: [110, 135, 160, 190, 215, 240, 270, 295, 320, 350] },
 ];
 const allyClass = id => ALLY_CLASSES.find(c => c.id === id) || null;
@@ -2391,7 +2393,7 @@ class Bot {
 
 /** Место бойца в строю: дуга за спиной игрока, по одному сектору на каждого. */
 function squadSlotPoint(idx, total) {
-  const spread = 0.62;
+  const spread = 0.78;
   const base = player.ang + Math.PI;                    // за спиной
   const a = base + (idx - (total - 1) / 2) * spread;
   return { x: player.x + Math.cos(a) * SQUAD.FOLLOW, y: player.y + Math.sin(a) * SQUAD.FOLLOW };
@@ -2438,15 +2440,22 @@ class Ally {
     return best;
   }
 
-  /** Не заденет ли выстрел заложника или своего на линии огня. */
+  /** Не заденет ли выстрел заложника или своего на линии огня. Проверяется не
+   *  сама линия, а конус, в который ложатся пули: разброс бойца плюс разброс
+   *  ствола. Иначе очередь мимо цели прошивает того, кто стоит рядом с ней. */
   lineBlocked(tx, ty) {
     const a = Math.atan2(ty - this.y, tx - this.x);
     const dx = Math.cos(a), dy = Math.sin(a);
     const target = dist(this.x, this.y, tx, ty);
+    const cone = this.stats.aim + weaponOf(this).spread + this.spread;
     const shielded = [...hostages, ...allies.filter(o => o !== this && o.alive), player];
     for (const h of shielded) {
       if (!h.alive) continue;
-      const t = rayCircle(this.x, this.y, dx, dy, h.x, h.y, h.r + 6);
+      const d = dist(this.x, this.y, h.x, h.y);
+      if (d > target) continue;
+      // Запас с полуторным конусом: своих бережём охотнее, чем добираем цель.
+      const margin = h.r + 14 + d * cone * 1.6;
+      const t = rayCircle(this.x, this.y, dx, dy, h.x, h.y, margin);
       if (Number.isFinite(t) && t > 0 && t < target) return true;
     }
     return false;
@@ -2575,12 +2584,14 @@ class Ally {
     const aim = Math.atan2(t.y - this.y, t.x - this.x);
     const d = dist(this.x, this.y, t.x, t.y);
     const w = weaponOf(this);
-    this.ang = turnToward(this.ang, aim, 5.2 * dt);
+    this.ang = turnToward(this.ang, aim, 7.2 * dt);
     this.react -= dt;
 
     // Дистанцию держит, но своей точки не бросает: отряд не растаскивает по карте.
     const a = this.anchor();
-    const want = this.stats.melee ? 90 : clamp(w.range * 0.4, 150, 330);
+    // С пистолетом на дистанции не настреляешь — боец сам сокращает её.
+    const want = this.stats.melee ? 90 : w.slot === 'pistol' ? 150
+      : clamp(w.range * 0.4, 150, 330);
     const pull = clamp((d - want) / 110, -1, 1);
     const off = dist(this.x, this.y, a.x, a.y);
     const home = off > SQUAD.LEASH ? 1 : 0;
@@ -2591,16 +2602,16 @@ class Ally {
 
     if (this.react > 0) return;
     if (d > w.range * 0.95) return;
-    if (Math.abs(angDiff(aim, this.ang)) > 0.18) return;
+    if (Math.abs(angDiff(aim, this.ang)) > 0.2) return;
     if (this.lineBlocked(t.x, t.y)) return;            // по своим не стреляем
     if (this.cooldown > 0 || this.reloading > 0) return;
 
     fireWeapon(this, this.ang, this.stats.aim);
     if (--this.burst <= 0) {
-      this.burst = 2 + (Math.random() * 3 | 0);
-      this.cooldown += rand(0.35, 0.8);
+      this.burst = 3 + (Math.random() * 3 | 0);
+      this.cooldown += rand(0.25, 0.55);
     } else if (!w.auto) {
-      this.cooldown += rand(0.12, 0.35);
+      this.cooldown += rand(0.07, 0.2);
     }
   }
 }

@@ -55,15 +55,18 @@ function lane() {
   }
 
   const a1 = allyStats('assault', 1), a10 = allyStats('assault', 10);
-  say(a1.hp === 90 && a1.dmg === 0.55 && a1.weapon === 'glock' && a1.armor === 0,
+  say(a1.hp === 110 && a1.dmg === 0.72 && a1.weapon === 'p250' && a1.armor === 0,
       `первый уровень: ${a1.hp} HP, урон ${a1.dmg}, ${WEAPONS[a1.weapon].name}, без брони`);
-  say(a1.hp < CFG.BOT_HP && a1.dmg < CFG.ENEMY_DAMAGE && a1.aim > 0.22,
-      `рядовой слабее рядового врага: ${a1.hp} против ${CFG.BOT_HP} HP, урон ${a1.dmg} против ${CFG.ENEMY_DAMAGE}`);
+  say(a1.hp > CFG.BOT_HP && a1.dmg > CFG.ENEMY_DAMAGE && a1.aim < skillForRound(1).aim &&
+      a1.react < skillForRound(1).react,
+      `рядовой сильнее рядового врага: ${a1.hp} против ${CFG.BOT_HP} HP, урон ${a1.dmg} против ` +
+      `${CFG.ENEMY_DAMAGE}, разброс ${a1.aim} против ${skillForRound(1).aim.toFixed(3)}`);
   say(a10.weaponLv === 7 && a10.armor === 250 && a10.weapon === 'aug',
       `генерал: ${WEAPONS[a10.weapon].name} ур. ${a10.weaponLv}, броня ${a10.armor} — жилет 4-го уровня`);
   say(a10.armor === ARMOR_TYPES[3].points, 'броня десятого уровня совпадает с «Тяжёлым бронекостюмом»');
-  say(a10.dmg === 0.80 && a10.dmg < 1, `даже генерал бьёт слабее игрока: ${a10.dmg} против 1`);
-  say(a10.react > 0.4 && a10.aim > 0.05, 'реакция и кучность всегда хуже игрока');
+  say(a10.dmg === 0.90 && a10.dmg < 1, `даже генерал бьёт слабее игрока: ${a10.dmg} против 1`);
+  say(a10.react > 0.3 && a10.aim > WEAPONS.aug.spread,
+      `реакция и разброс всегда хуже игрока: ${a10.react}с и +${a10.aim} к разбросу ствола`);
 
   const s10 = allyStats('shield', 10), s9 = allyStats('shield', 9);
   say(s10.armor === 350 && s10.armor === ARMOR_TYPES[4].points, 'щитоносец получает жилет 5-го уровня');
@@ -149,36 +152,84 @@ function lane() {
   player.x = L.x0; player.y = L.y;
   a.x = L.x0; a.y = L.y;
   step(30);
-  say(dist(a.x, a.y, player.x, player.y) < SQUAD.FOLLOW + 40, 'на месте боец держится рядом');
+  say(dist(a.x, a.y, player.x, player.y) < SQUAD.FOLLOW + 40,
+      `на месте боец держится рядом: ${Math.round(dist(a.x, a.y, player.x, player.y))} px`);
+  say(SQUAD.FOLLOW <= 100 && SQUAD.FOLLOW_STOP <= 50, `строй плотный: радиус ${SQUAD.FOLLOW} px`);
+
+  // Весь отряд держится вплотную, а не растягивается по карте.
+  {
+    const four = squadOf([['assault', 1], ['medic', 3], ['shield', 3], ['assault', 5]]);
+    player.x = L.x0; player.y = L.y;
+    four.forEach(o => { o.x = L.x0; o.y = L.y; });
+    step(180);
+    const far = Math.max(...four.map(o => dist(o.x, o.y, player.x, player.y)));
+    say(far < 150, `вчетвером держатся рядом: дальний в ${Math.round(far)} px`);
+  }
 
   // Игрок уходит на другой конец карты — боец догоняет.
+  const one = squadOf([['assault', 1]])[0];
   player.x = SPAWN_CT.x; player.y = SPAWN_CT.y;
-  a.x = L.x0 + 11 * T; a.y = L.y;
-  const far0 = dist(a.x, a.y, player.x, player.y);
+  one.x = L.x0 + 11 * T; one.y = L.y;
+  const far0 = dist(one.x, one.y, player.x, player.y);
   step(60 * 12);
-  const far1 = dist(a.x, a.y, player.x, player.y);
+  const far1 = dist(one.x, one.y, player.x, player.y);
   say(far1 < far0 && far1 < SQUAD.FOLLOW + 60,
       `догнал через всю карту: ${Math.round(far0)} → ${Math.round(far1)} px`);
-  say(!hitsWall(a.x, a.y, a.r), 'в стене не застрял');
+  say(!hitsWall(one.x, one.y, one.r), 'в стене не застрял');
 
   // Идём вдоль коридора: боец не отваливается.
   player.x = L.x0; player.y = L.y;
-  a.x = L.x0; a.y = L.y;
+  one.x = L.x0; one.y = L.y;
   step(90);                      // дать отряду встать в строй перед замером
   let worst = 0;
   for (let i = 0; i < 60 * 6; i++) {
     player.x = Math.min(L.x0 + 11 * T, player.x + 120 * DT);
     player.y = L.y;
     updateWorld(DT);
-    worst = Math.max(worst, dist(a.x, a.y, player.x, player.y));
+    worst = Math.max(worst, dist(one.x, one.y, player.x, player.y));
   }
   say(worst < SQUAD.FOLLOW_RUN, `на ходу отстаёт не больше чем на ${Math.round(worst)} px`);
 
   // Проход не перекрывает: игрок проходит там, где стоит боец.
-  a.x = player.x + 20; a.y = player.y;
+  one.x = player.x + 20; one.y = player.y;
   const px0 = player.x;
   for (let i = 0; i < 40; i++) moveEntity(player, 120 * DT, 0);
   say(player.x > px0 + 60, 'боец не перекрывает игроку дорогу — столкновений между своими нет');
+}
+
+// ── Дуэль один на один: рядовой выигрывает с первого уровня ───────────────
+{
+  /** Боец уровня lv против террориста со стволом gun на дистанции d. */
+  function duel(lv, gun, d, seed) {
+    Math.random = mulberry32(seed);
+    const [a] = squadOf([['assault', lv]]);
+    const L = lane();
+    player.x = L.x0 - 400; player.y = L.y - 400;     // игрок далеко и не вмешивается
+    a.x = L.x0; a.y = L.y; a.ang = 0; a.order = { x: L.x0, y: L.y };
+    const b = bots[0];
+    Object.assign(b, { alive: true, hp: CFG.BOT_HP, armor: 0, x: L.x0 + d, y: L.y,
+                       ang: Math.PI, facing: Math.PI, post: { x: L.x0 + d, y: L.y },
+                       mode: 'guard', cooldown: 0, reloading: 0, skill: skillForRound(1) });
+    giveWeapon(b, gun);
+    b.setMode('guard');
+    for (let i = 0; i < 60 * 20; i++) {
+      updateWorld(DT);
+      if (!b.alive) return true;
+      if (a.down) return false;
+    }
+    return false;
+  }
+
+  for (const gun of ['ak', 'mp5', 'nova']) {
+    let wins = 0;
+    for (let s = 0; s < 8; s++) if (duel(1, gun, 240, 7000 + s * 31)) wins++;
+    say(wins >= 7, `рядовой выигрывает дуэль против ${WEAPONS[gun].name}: ${wins} из 8`);
+  }
+  let close = 0;
+  for (let s = 0; s < 6; s++) if (duel(1, 'ak', 140, 8000 + s * 47)) close++;
+  say(close >= 5, `и вблизи против AK-47: ${close} из 6`);
+
+  Math.random = mulberry32(90210);
 }
 
 // ── Бой: стреляет по врагам, не по своим ──────────────────────────────────
@@ -200,7 +251,9 @@ function lane() {
   const pHp = player.hp;
   const h = hostages[0];
   Object.assign(h, { alive: true, hp: 100, rescued: false, x: L.x0 + 4 * T, y: L.y });
-  Object.assign(foe, { alive: true, hp: 1000, x: L.x0 + 7 * T, y: L.y });
+  Object.assign(foe, { alive: true, hp: 1000, x: L.x0 + 7 * T, y: L.y,
+                       skill: { ...skillForRound(1), react: 999 } });
+  foe.setMode('guard');
   player.x = L.x0 + 3 * T; player.y = L.y;
   step(60 * 5);
   say(player.hp === pHp, 'по игроку на линии огня не стреляет');
@@ -440,7 +493,7 @@ function lane() {
   const mine = named('ally0');
   say(!!mine && /Прапорщик/.test(textOf(mine)) && /ур\. 4\/10/.test(textOf(mine)),
       `у бойца звание и уровень: «${textOf(mine).split('|')[0].trim()}»`);
-  say(/UMP-45 ур\. 3/.test(textOf(mine)) && /броня 100/.test(textOf(mine)),
+  say(/MP5-SD ур\. 3/.test(textOf(mine)) && /броня 100/.test(textOf(mine)),
       'в карточке видно оружие и броню этого уровня');
   say(mine.upgradeButton.textContent === `Улучшить до 5 — ${money(allyUpgradeCost(4))}`,
       `кнопка улучшения с ценой: «${mine.upgradeButton.textContent}»`);
