@@ -139,6 +139,9 @@
   .cc-act:hover:not(:disabled){background:#1b3455}
   .cc-act:disabled{opacity:.38;cursor:not-allowed}
   .cc-act.own{border-color:#1d3a2b;background:#0e1d16;color:var(--cash)}
+  .cc-up{margin-top:0;border-color:#5a4a1e;background:#1f1a0d;color:#ffd98a}
+  .cc-up:hover:not(:disabled){background:#2c2410}
+  .cc-level{font:600 10.5px ui-monospace,Menlo,monospace;color:#ffd98a;letter-spacing:.04em}
 
   /* ── Выход из боя и обучение ─────────────────────────────────────── */
   .exit-btn{position:absolute;left:18px;top:76px;z-index:5;padding:7px 14px;border-radius:9px;
@@ -324,10 +327,11 @@ const CFG = {
   BOT_SHOT_NEAR: 36,            // пуля прошла ближе этого к боту — он её заметил, px
   BOT_R: 11,
   BOT_HP: 100,
+  BOT_ARMOR_FROM: 11,           // с этой операции террористы в бронежилетах с первого раунда
 
   // Раунды
   BUY_TIME: 5,                  // подготовка к раунду: отсчёт перед боем, с
-  ROUND_TIME: 150,
+  ROUND_TIME: 210,
   END_TIME: 5,
 
   // Экономика
@@ -1043,7 +1047,8 @@ function levelAt(i) {
       id, name: `Операция ${level}`, map: id, enemies: null, wins: 1, generated: true,
       brief: `${m.rooms.length} помещений, поворотов ${turns}. ` +
              (singles ? `Единственных проходов: ${singles} — там не обойти. ` : 'На каждом рубеже есть выбор. ') +
-             `Заложников ${m.hostages.length}.`,
+             `Заложников ${m.hostages.length}.` +
+             (level >= CFG.BOT_ARMOR_FROM ? ' Террористы в бронежилетах.' : ''),
     });
   }
   return generatedLevels.get(i);
@@ -1229,6 +1234,43 @@ const PEN_CLASS = {
   knife: 'none',
 };
 for (const [id, cls] of Object.entries(PEN_CLASS)) WEAPONS[id].pen = PEN[cls];
+
+/* ── Прокачка оружия ──────────────────────────────────────────────────────
+   У каждого ствола игрока 10 уровней. Первый — базовые характеристики, к
+   десятому они улучшаются равными шагами. Действует только на оружие игрока:
+   террористы стреляют из базовых стволов. Пробитие стен и ящиков задано
+   классом оружия, прокачка его не трогает. */
+const UPGRADE = {
+  MAX: 10,
+  COST: 0.10,          // следующий уровень стоит 10% цены ствола × текущий уровень
+  // Прибавка к десятому уровню, промежуточные — равными долями.
+  dmg: 0.35, pierce: 0.15, rpm: 0.15, spread: -0.30, recoil: -0.30, mag: 0.30, reload: -0.25,
+};
+const upgradeCache = new Map();
+
+/** Характеристики ствола на уровне прокачки. Объект кешируется: его берут каждый кадр. */
+function upgradedWeapon(id, level) {
+  const base = WEAPONS[id];
+  if (!base || base.slot === 'melee' || level <= 1) return base;
+  level = Math.min(level, UPGRADE.MAX);
+  const key = id + ':' + level;
+  let w = upgradeCache.get(key);
+  if (w) return w;
+  const k = (level - 1) / (UPGRADE.MAX - 1);
+  w = {
+    ...base, level,
+    dmg: Math.round(base.dmg * (1 + UPGRADE.dmg * k)),
+    pierce: Math.min(0.98, base.pierce + UPGRADE.pierce * k),
+    rpm: base.rpm * (1 + UPGRADE.rpm * k),
+    spread: base.spread * (1 + UPGRADE.spread * k),
+    recoil: base.recoil * (1 + UPGRADE.recoil * k),
+    mag: Math.round(base.mag * (1 + UPGRADE.mag * k)),
+    reserve: Math.round(base.reserve * (1 + UPGRADE.mag * k)),
+    reload: base.reload * (1 + UPGRADE.reload * k),
+  };
+  upgradeCache.set(key, w);
+  return w;
+}
 
 /** Пак, с которым игрок выходит в раунд. Заполняется из арсенала: всё, что
  *  куплено и экипировано, попадает сюда и не теряется при гибели. */
@@ -1583,7 +1625,9 @@ const Audio2D = (() => {
 /* ═══════════════════════════════════════════════════════════════════════════
    COMBAT — хитскан, урон сквозь броню, гранаты.
    ═══════════════════════════════════════════════════════════════════════════ */
-const activeWeapon = () => WEAPONS[player.slots[player.active]] || WEAPONS.knife;
+// Оружие игрока — с его прокачкой; у ботов стволы базовые.
+const playerWeapon = id => upgradedWeapon(id, weaponLevel(id));
+const activeWeapon = () => playerWeapon(player.slots[player.active]) || WEAPONS.knife;
 const weaponOf = e => (e === player ? activeWeapon() : WEAPONS[e.weapon]);
 
 /** Патроны сущности для конкретного ствола (создаются лениво). */
@@ -1594,7 +1638,7 @@ function ammoOf(e, wid) {
 }
 
 function giveWeapon(e, wid, full = true) {
-  const w = WEAPONS[wid];
+  const w = e === player ? playerWeapon(wid) : WEAPONS[wid];
   if (e === player) player.slots[w.slot] = wid;
   else e.weapon = wid;
   if (full || !e.ammo[wid]) e.ammo[wid] = { mag: w.mag, reserve: w.reserve };
@@ -2261,7 +2305,7 @@ function resetPlayerForRound() {
   // Боезапас перед раундом всегда полный.
   for (const slot of ['pistol', 'rifle']) {
     const wid = player.slots[slot];
-    if (wid) player.ammo[wid] = { mag: WEAPONS[wid].mag, reserve: WEAPONS[wid].reserve };
+    if (wid) player.ammo[wid] = { mag: playerWeapon(wid).mag, reserve: playerWeapon(wid).reserve };
   }
   // Броня постоянная: надета в арсенале — каждый раунд целая.
   const kit = armorOf(progress.armorEquipped);
@@ -2279,7 +2323,7 @@ function startRound() {
   // Каждый враг стоит на своей позиции и держит свой сектор.
   bots = ENEMY_POSTS.map((post, i) => {
     const b = new Bot(post, botLoadout(), skill, T_KITS[i % T_KITS.length]);
-    if (state.round >= 3) b.armor = CFG.ARMOR_MAX;
+    if (state.round >= 3 || state.levelIndex + 1 >= CFG.BOT_ARMOR_FROM) b.armor = CFG.ARMOR_MAX;
     if (state.round >= 6) b.helmet = true;
     return b;
   });
@@ -3589,7 +3633,7 @@ function drawWeaponPanel() {
   ctx.textAlign = 'right';
   ctx.font = '600 13px "Segoe UI", system-ui, sans-serif';
   ctx.fillStyle = '#e9eef6';
-  ctx.fillText(wp.name, x + w - 16, y + 22);
+  ctx.fillText(wp.slot === 'melee' ? wp.name : `${wp.name} · ур. ${weaponLevel(wp.id)}`, x + w - 16, y + 22);
 
   ctx.font = '700 22px ui-monospace, Menlo, monospace';
   if (am) {
@@ -4313,12 +4357,16 @@ const progress = {
   money: 0,
   owned: [...STARTER],
   equipped: { melee: 'knife', pistol: 'usp', rifle: null },
+  upgrades: {},                   // уровень прокачки ствола: id → 2…10 (нет записи — 1)
   armorOwned: [],                 // купленная броня, id из ARMOR_TYPES
   armorEquipped: null,            // надетая; null — без брони
   tutorial: 'level1',            // level1 → arsenal → done
 };
 
 const owns = id => progress.owned.includes(id);
+const weaponLevel = id => clamp(progress.upgrades[id] || 1, 1, UPGRADE.MAX);
+/** Цена следующего уровня: 10% цены ствола × текущий уровень, до десятков. */
+const upgradeCost = id => Math.round(WEAPONS[id].price * UPGRADE.COST * weaponLevel(id) / 10) * 10;
 
 /** Экипировка переносится в стартовый пак, с которым игрок выходит в раунд. */
 function applyLoadout() {
@@ -4341,6 +4389,13 @@ function loadProgress() {
     if (Array.isArray(data.owned)) {
       // Стартовый пак нельзя потерять, а неизвестные идентификаторы игнорируем.
       progress.owned = [...new Set([...STARTER, ...data.owned.filter(id => WEAPONS[id])])];
+    }
+    if (data.upgrades && typeof data.upgrades === 'object') {
+      // Прокачка имеет смысл только у купленного ствола; уровни зажимаем в 1…10.
+      progress.upgrades = {};
+      for (const [id, lv] of Object.entries(data.upgrades))
+        if (WEAPONS[id] && owns(id) && Number.isInteger(lv) && lv > 1)
+          progress.upgrades[id] = Math.min(lv, UPGRADE.MAX);
     }
     if (Array.isArray(data.armorOwned)) {
       progress.armorOwned = [...new Set(data.armorOwned.filter(id => armorOf(id)))];
@@ -4478,7 +4533,7 @@ function weaponBars(w) {
   const maxSpread = Math.max(...guns.map(g => g.spread));
   return [
     ['Урон', w.dmg / maxDmg, w.pellets ? `${w.dmg}×${w.pellets}` : String(w.dmg)],
-    ['Темп', w.rpm / maxRpm, String(w.rpm)],
+    ['Темп', w.rpm / maxRpm, String(Math.round(w.rpm))],
     ['Кучность', clamp(1 - w.spread / maxSpread, 0, 1), (100 - w.spread * 900).toFixed(0)],
     ['Пробитие', (w.pen.crate / maxCrate + w.pen.wall / maxWall) / 2,
       `${(w.pen.crate / BLOCK).toFixed(1)}/${(w.pen.wall / BLOCK).toFixed(1)}`],
@@ -4501,6 +4556,19 @@ function buyWeapon(id) {
     tutorialJustDone = true;
   }
   equipWeapon(id);
+}
+
+function upgradeWeapon(id) {
+  const w = WEAPONS[id];
+  if (!w || w.slot === 'melee' || !owns(id) || weaponLevel(id) >= UPGRADE.MAX ||
+      progress.money < upgradeCost(id) || tutorialLocksPurchase('upgrade')) {
+    Audio2D.ui(false); return;
+  }
+  addMoney(-upgradeCost(id));
+  progress.upgrades[id] = weaponLevel(id) + 1;
+  saveProgress();
+  Audio2D.ui(true);
+  renderArsenal();
 }
 
 function equipWeapon(id) {
@@ -4540,11 +4608,12 @@ function node(tag, cls, text) {
   return e;
 }
 
-function makeCard({ name, price, desc, bars, owned, equipped, action, label, enabled }) {
+function makeCard({ name, price, desc, bars, owned, equipped, action, label, enabled, level, upgrade }) {
   const card = node('div', 'cat-card' + (equipped ? ' equipped' : owned ? ' owned' : ''));
 
   const top = node('span', 'cc-top');
   top.appendChild(node('span', 'cc-name', name));
+  if (level) top.appendChild(node('span', 'cc-level', `ур. ${level}/${UPGRADE.MAX}`));
   top.appendChild(node('span', 'cc-price', owned ? 'куплено' : money(price)));
   card.appendChild(top);
   card.appendChild(node('span', 'cc-desc', desc));
@@ -4568,6 +4637,14 @@ function makeCard({ name, price, desc, bars, owned, equipped, action, label, ena
   if (enabled && action) btn.onclick = action;
   card.appendChild(btn);
   card.actionButton = btn;
+
+  if (upgrade) {
+    const up = node('button', 'cc-act cc-up', upgrade.label);
+    up.disabled = !upgrade.enabled;
+    if (upgrade.enabled) up.onclick = upgrade.action;
+    card.appendChild(up);
+    card.upgradeButton = up;
+  }
   return card;
 }
 
@@ -4632,9 +4709,17 @@ function renderArsenal() {
       const owned = owns(id);
       const equipped = progress.equipped[w.slot] === id;
       const locked = !owned && tutorialLocksPurchase(id);
+      const level = weaponLevel(id);
+      const maxed = level >= UPGRADE.MAX;
+      const upLocked = tutorialLocksPurchase('upgrade');
       const card = makeCard({
-        name: w.name, price: w.price, desc: w.desc, bars: weaponBars(w),
-        owned, equipped,
+        name: w.name, price: w.price, desc: w.desc, bars: weaponBars(playerWeapon(id)),
+        owned, equipped, level: owned ? level : 0,
+        upgrade: owned ? {
+          label: maxed ? 'Максимальный уровень' : `Улучшить до ${level + 1} — ${money(upgradeCost(id))}`,
+          enabled: !maxed && !upLocked && progress.money >= upgradeCost(id),
+          action: () => upgradeWeapon(id),
+        } : null,
         label: equipped ? 'Экипировано' : owned ? 'Экипировать'
           : locked ? `Сначала ${WEAPONS[TUTORIAL_WEAPON].name}` : 'Купить',
         enabled: !equipped && !locked && (owned || progress.money >= w.price),
