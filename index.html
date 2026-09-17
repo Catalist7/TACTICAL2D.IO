@@ -318,8 +318,10 @@ const CFG = {
 
   // Боты
   ENEMY_DAMAGE: 0.6,            // множитель урона вражеского оружия
-  BOT_LEASH: 180,               // насколько бот отходит от своей позиции
-  BOT_SPEED: 142,
+  BOT_LEASH: 120,               // насколько бот отходит от своей позиции (3 клетки)
+  BOT_SPEED: 115,
+  BOT_TRACK: 4.5,               // как быстро бот ведёт прицел за целью, рад/с
+  BOT_SHOT_NEAR: 36,            // пуля прошла ближе этого к боту — он её заметил, px
   BOT_R: 11,
   BOT_HP: 100,
 
@@ -1794,7 +1796,25 @@ function hitscan(ox, oy, ang, w, attacker) {
     decals.push({ x: hx, y: hy, kind: 'bullet', life: 1, decay: 0.06, r: 2.6, seed: Math.random() });
     debris(hx, hy, ang, material);
   }
+  // И при попадании, и при промахе: кого задело или обдало пулей — тот обернётся.
+  alertShotBots(attacker, ox, oy, hx, hy, victim);
   return victim;
+}
+
+/** Боты, в которых попали или мимо которых вплотную прошла пуля игрока,
+ *  разворачиваются к стрелку. Проверяется весь путь пули от ствола до конца. */
+function alertShotBots(attacker, ox, oy, hx, hy, victim) {
+  if (attacker !== player) return;
+  const dx = hx - ox, dy = hy - oy, len2 = dx * dx + dy * dy || 1;
+  for (const b of bots) {
+    if (!b.alive) continue;
+    let noticed = b === victim;
+    if (!noticed) {
+      const t = clamp(((b.x - ox) * dx + (b.y - oy) * dy) / len2, 0, 1);
+      noticed = dist(b.x, b.y, ox + dx * t, oy + dy * t) <= b.r + CFG.BOT_SHOT_NEAR;
+    }
+    if (noticed) b.onShot(ox, oy);
+  }
 }
 
 /** Выстрел. Общий для игрока и ботов: патроны, разброс, отдача, шум. */
@@ -1813,6 +1833,7 @@ function fireWeapon(e, aimAng, extraSpread = 0) {
       if (Math.abs(angDiff(Math.atan2(t.y - e.y, t.x - e.x), aimAng)) > 0.9) continue;
       if (!lineClear(e.x, e.y, t.x, t.y)) continue;
       applyDamage(t, w.dmg * damageScale(e), w.pierce, e);
+      if (t.kind === 'bot' && t.alive) t.onShot(e.x, e.y);   // ударили ножом со спины
       break;
     }
     return true;
@@ -1877,8 +1898,8 @@ function finishReload(e) {
 function skillForRound(round) {
   const t = clamp((round - 1) / 9, 0, 1);      // к десятому раунду боты на пике
   return {
-    react:   lerp(0.75, 0.42, t),               // задержка реакции, с
-    aim:     lerp(0.155, 0.075, t),             // добавка к разбросу — стреляют грубо
+    react:   lerp(1.05, 0.6, t),                // задержка реакции, с
+    aim:     lerp(0.22, 0.105, t),              // добавка к разбросу — стреляют грубо
     hearing: lerp(0.82, 1.10, t),               // на каком расстоянии слышат шум
     nerve:   lerp(0.30, 0.65, t),               // готовность подаваться вперёд
   };
@@ -1906,6 +1927,16 @@ class Bot {
     if (this.mode === 'engage' || kind === 'reload') return;
     this.lookAt = { x, y };
     this.alertTimer = rand(3.5, 5.5);
+    this.setMode('alert');
+  }
+
+  /* ── Обстрел из невидимой точки: пуля попала или прошла вплотную, а стрелка
+        не видно — разворачивается туда, откуда прилетело. С места не сходит,
+        а если стрелок окажется в конусе, дальше сработает обычное «увидел». ── */
+  onShot(fromX, fromY) {
+    if (!this.alive || this.mode === 'engage' || this.mode === 'cover') return;
+    this.lookAt = { x: fromX, y: fromY };
+    this.alertTimer = rand(4, 6);
     this.setMode('alert');
   }
 
@@ -2094,7 +2125,7 @@ class Bot {
     const d = dist(this.x, this.y, tx, ty);
     const w = weaponOf(this);
 
-    this.ang = turnToward(this.ang, aim, 6.5 * dt);
+    this.ang = turnToward(this.ang, aim, CFG.BOT_TRACK * dt);
     this.react -= dt;
 
     if (this.hp < 42 && Math.random() < 1.6 * dt) {
