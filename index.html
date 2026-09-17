@@ -388,6 +388,7 @@ let ENEMY_POSTS = [];          // позиции врагов: они же по�
 let HOSTAGE_POS = [];
 let SECTIONS = [], GATES = [], MAP_MARKS = [], MAP_NAME = '', OUTDOOR_X = 0, ROOMS = [];
 let OUTDOOR_RECT = null;   // двор прямоугольником — у змейки он может быть где угодно
+let MAP_PROPS = null;      // мусор на полу: считается при первой отрисовке карты
 
 const gi = (x, y) => y * MAP_W + x;
 const inBounds = (x, y) => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H;
@@ -571,6 +572,7 @@ function loadMap(id, enemyOverride) {
   OUTDOOR_X = m.outdoorX || 0;
   OUTDOOR_RECT = m.outdoor || null;
   mapLayer = miniLayer = null;   // слои перерисуются под новую карту
+  MAP_PROPS = null;
 
   clearKeyTiles();
 }
@@ -3178,6 +3180,362 @@ function drawFloorMarks(c) {
   c.globalAlpha = 1;
 }
 
+/* ── Мусор и следы запустения ─────────────────────────────────────────────
+   Чистый декор: лежит на полу, не мешает ходить и не задерживает пули —
+   сетка карты не меняется. Набор зависит от назначения помещения, а
+   расстановка — от самой карты: одна и та же карта всегда захламлена
+   одинаково. Рисуется один раз, в статический слой карты. */
+const PROP_SETS = {
+  yard:      { tire: 3, tires: 2, rocks: 3, rubble: 2, planks: 1, trash: 2, barrel: 1, grass: 3 },
+  lanes:     { trash: 3, papers: 1, rubble: 2, rocks: 2, cardboard: 1, tire: 1 },
+  workshop:  { scrap: 3, barrel: 2, tire: 2, oil: 2, rubble: 1, trash: 1 },
+  warehouse: { planks: 3, cardboard: 3, trash: 2, scrap: 1, tires: 1 },
+  hall:      { rubble: 3, rocks: 2, trash: 2, planks: 1, tire: 1 },
+  control:   { papers: 3, monitor: 2, chair: 2, trash: 2, cardboard: 1 },
+  default:   { papers: 2, cardboard: 2, trash: 3, chair: 1, monitor: 1, rubble: 1, tire: 1 },
+};
+const PROPS = {
+  DENSITY: 0.045,     // предметов на клетку пола: 8–12 на помещение
+  WEAR: 0.014,        // трещин и пятен на клетку пола
+  GAP: 30,            // между предметами, px
+  CLEAR: 48,          // вокруг старта, заложников и постов врагов, px
+  SCALE: [1.25, 1.65],// размер предмета: заметно, но не крупнее бойца
+  WALL_BIAS: 0.55,    // мусор скапливается у стен
+};
+
+const hashStr = str => {
+  let h = 2166136261;
+  for (const ch of str) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+};
+
+/** Помещения карты: у змейки — комнаты, у «Комбината» — секции, у «Офиса» — вся карта. */
+function propZones() {
+  if (ROOMS.length) return ROOMS.map(r => ({ kind: r.kind, x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1 }));
+  if (SECTIONS.length)
+    return SECTIONS.map(sec => ({ kind: KIND_BY_NAME[sec.name] || 'default', x0: sec.x0, y0: 0, x1: sec.x1, y1: MAP_H - 1 }));
+  return [{ kind: 'default', x0: 0, y0: 0, x1: MAP_W - 1, y1: MAP_H - 1 }];
+}
+
+function mapProps() {
+  if (!MAP_PROPS) MAP_PROPS = scatterProps();
+  return MAP_PROPS;
+}
+
+function scatterProps() {
+  const T = CFG.TILE;
+  const rnd = mulberry32(hashStr(`${MAP_NAME}:${MAP_W}x${MAP_H}`));
+  const r = (a, b) => a + rnd() * (b - a);
+  const pickWeighted = set => {
+    const entries = Object.entries(set);
+    let t = rnd() * entries.reduce((sum, [, w]) => sum + w, 0);
+    for (const [k, w] of entries) if ((t -= w) <= 0) return k;
+    return entries[0][0];
+  };
+
+  // Разметку (полосы у рубежей, стрелки) не закрываем, запретные зоны — можно.
+  const marked = new Set();
+  for (const m of MAP_MARKS) {
+    if (m.kind === 'zone') continue;
+    for (let y = m.y; y < m.y + (m.h || 1); y++)
+      for (let x = m.x; x < m.x + (m.w || 1); x++) marked.add(y * MAP_W + x);
+  }
+  const keep = [SPAWN_CT, ...HOSTAGE_POS, ...ENEMY_POSTS.map(p => p.at)];
+  const props = [];
+  const free = (x, y, gap) => {
+    const tx = Math.floor(x / T), ty = Math.floor(y / T);
+    if (cell(tx, ty) !== FLOOR || marked.has(ty * MAP_W + tx)) return false;
+    if (x > RESCUE.x - 24 && x < RESCUE.x + RESCUE.w + 24 &&
+        y > RESCUE.y - 24 && y < RESCUE.y + RESCUE.h + 24) return false;
+    if (keep.some(p => Math.hypot(p.x - x, p.y - y) < PROPS.CLEAR)) return false;
+    return !gap || props.every(p => p.wear || Math.hypot(p.x - x, p.y - y) >= PROPS.GAP);
+  };
+
+  for (const z of propZones()) {
+    const tiles = [], nearWall = [];
+    for (let ty = z.y0; ty <= z.y1; ty++)
+      for (let tx = z.x0; tx <= z.x1; tx++) {
+        if (cell(tx, ty) !== FLOOR) continue;
+        tiles.push([tx, ty]);
+        if (solid(tx + 1, ty) || solid(tx - 1, ty) || solid(tx, ty + 1) || solid(tx, ty - 1)) nearWall.push([tx, ty]);
+      }
+    if (!tiles.length) continue;
+    const set = PROP_SETS[z.kind] || PROP_SETS.default;
+    const place = (count, wear) => {
+      for (let placed = 0, tries = 0; placed < count && tries < count * 14; tries++) {
+        const pool = !wear && nearWall.length && rnd() < PROPS.WALL_BIAS ? nearWall : tiles;
+        const [tx, ty] = pool[(rnd() * pool.length) | 0];
+        const x = (tx + r(0.2, 0.8)) * T, y = (ty + r(0.2, 0.8)) * T;
+        if (!free(x, y, !wear)) continue;
+        props.push({
+          kind: wear ? (rnd() < 0.6 ? 'crack' : 'stain') : pickWeighted(set),
+          x, y, a: r(0, TAU), s: r(...PROPS.SCALE), seed: rnd(), zone: z.kind, wear,
+        });
+        placed++;
+      }
+    };
+    place(Math.round(tiles.length * PROPS.WEAR), true);
+    place(Math.round(tiles.length * PROPS.DENSITY), false);
+  }
+  return props;
+}
+
+/** Неровное пятно: круг с дрожащим радиусом. */
+function roughBlob(c, rnd, x, y, r, n = 7, jag = 0.35) {
+  c.beginPath();
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * TAU, rr = r * (1 - jag / 2 + rnd() * jag);
+    const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+    if (i) c.lineTo(px, py); else c.moveTo(px, py);
+  }
+  c.closePath();
+}
+
+const groundShadow = (c, rx, ry) => {
+  c.fillStyle = 'rgba(0,0,0,.22)';
+  c.beginPath(); c.ellipse(1.5, 2, rx, ry, 0, 0, TAU); c.fill();
+};
+
+function drawTire(c) {
+  groundShadow(c, 10.5, 10.5);
+  c.fillStyle = '#1c1d20';                           // протектор
+  c.beginPath(); c.arc(0, 0, 10, 0, TAU); c.fill();
+  c.strokeStyle = '#3a3d42'; c.lineWidth = 1.8;
+  c.beginPath();
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * TAU;
+    c.moveTo(Math.cos(a) * 8.2, Math.sin(a) * 8.2);
+    c.lineTo(Math.cos(a) * 10, Math.sin(a) * 10);
+  }
+  c.stroke();
+  c.fillStyle = '#2e3035';                           // боковина
+  c.beginPath(); c.arc(0, 0, 7.6, 0, TAU); c.fill();
+  c.strokeStyle = 'rgba(255,255,255,.12)'; c.lineWidth = 0.8;
+  c.beginPath(); c.arc(0, 0, 6.2, 0, TAU); c.stroke();
+  c.fillStyle = 'rgba(10,11,13,.78)';                // посередине дыра — там пол
+  c.beginPath(); c.arc(0, 0, 4.4, 0, TAU); c.fill();
+  c.strokeStyle = 'rgba(255,255,255,.14)'; c.lineWidth = 1.2;
+  c.beginPath(); c.arc(0, 0, 9, -2.3, -0.7); c.stroke();
+}
+
+const PROP_DRAW = {
+  tire(c) { drawTire(c); },
+
+  tires(c, rnd) {
+    // Свалка из трёх покрышек внахлёст.
+    for (const [x, y] of [[-6, -3], [6, -2], [0, 6]]) {
+      c.save(); c.translate(x, y); c.rotate(rnd() * TAU); drawTire(c); c.restore();
+    }
+  },
+
+  rocks(c, rnd) {
+    const colors = ['#7a746a', '#6a655c', '#8a8479', '#5d5850'];
+    const n = 4 + (rnd() * 3 | 0);
+    for (let i = 0; i < n; i++) {
+      const x = (rnd() - 0.5) * 22, y = (rnd() - 0.5) * 16, rr = 3 + rnd() * 3.6;
+      c.fillStyle = 'rgba(0,0,0,.2)';
+      roughBlob(c, rnd, x + 1, y + 1.4, rr, 6, 0.5); c.fill();
+      c.fillStyle = colors[(rnd() * colors.length) | 0];
+      roughBlob(c, rnd, x, y, rr, 6, 0.5); c.fill();
+      c.fillStyle = 'rgba(255,255,255,.12)';
+      roughBlob(c, rnd, x - rr * 0.25, y - rr * 0.3, rr * 0.4, 5, 0.4); c.fill();
+    }
+  },
+
+  rubble(c, rnd) {
+    c.fillStyle = 'rgba(170,165,150,.16)';
+    c.beginPath(); c.ellipse(0, 0, 17, 11, 0, 0, TAU); c.fill();
+    const colors = ['#8d9096', '#767a80', '#9da1a6', '#6b6f75'];
+    const n = 5 + (rnd() * 4 | 0);
+    for (let i = 0; i < n; i++) {
+      const x = (rnd() - 0.5) * 24, y = (rnd() - 0.5) * 15;
+      c.fillStyle = colors[(rnd() * colors.length) | 0];
+      roughBlob(c, rnd, x, y, 2 + rnd() * 3.6, 5, 0.6); c.fill();
+    }
+    c.strokeStyle = '#8a4b2a'; c.lineWidth = 1.1;      // торчит арматура
+    c.beginPath(); c.moveTo(-7, 3); c.lineTo(2, -1); c.lineTo(9, -4 + rnd() * 3); c.stroke();
+  },
+
+  planks(c, rnd) {
+    const colors = ['#6e4f2f', '#80603c', '#5c4128'];
+    for (let i = 0; i < 3; i++) {
+      c.save();
+      c.translate((rnd() - 0.5) * 3, (i - 1) * 5.6);
+      c.rotate((rnd() - 0.5) * 0.3);
+      const len = 20 - (rnd() < 0.45 ? 6 + rnd() * 5 : 0);   // часть досок сломана
+      c.fillStyle = colors[i];
+      c.fillRect(-10, -2, len, 4);
+      c.fillStyle = 'rgba(0,0,0,.25)';
+      c.fillRect(-10, 0.6, len, 0.8);
+      c.fillStyle = '#2a2a2a';
+      c.fillRect(-8, -0.6, 1.2, 1.2);
+      c.restore();
+    }
+  },
+
+  trash(c, rnd) {
+    const n = 3 + (rnd() * 3 | 0);
+    for (let i = 0; i < n; i++) {
+      const x = (rnd() - 0.5) * 18, y = (rnd() - 0.5) * 16, k = rnd();
+      if (k < 0.35) {
+        c.fillStyle = rnd() < 0.5 ? '#d1cab6' : '#b9b19b';            // скомканная бумага
+        roughBlob(c, rnd, x, y, 2.4 + rnd() * 1.4, 5, 0.5); c.fill();
+      } else if (k < 0.6) {
+        c.fillStyle = rnd() < 0.5 ? '#9aa3ac' : '#b8433a';            // банка
+        c.beginPath(); c.arc(x, y, 2.2, 0, TAU); c.fill();
+        c.fillStyle = 'rgba(0,0,0,.3)';
+        c.beginPath(); c.arc(x, y, 1.1, 0, TAU); c.fill();
+      } else if (k < 0.8) {
+        c.fillStyle = rnd() < 0.5 ? 'rgba(47,107,63,.9)' : 'rgba(110,70,30,.9)';   // бутылка
+        c.beginPath(); c.ellipse(x, y, 1.6, 4, rnd() * TAU, 0, TAU); c.fill();
+      } else {
+        c.fillStyle = 'rgba(220,220,214,.45)';                        // пакет
+        roughBlob(c, rnd, x, y, 4 + rnd() * 2, 6, 0.5); c.fill();
+      }
+    }
+  },
+
+  cardboard(c, rnd) {
+    const n = 1 + (rnd() * 2 | 0);
+    for (let i = 0; i < n; i++) {
+      c.save();
+      c.translate((rnd() - 0.5) * 8, (rnd() - 0.5) * 8);
+      c.rotate((rnd() - 0.5) * 1.2);
+      c.fillStyle = rnd() < 0.5 ? '#a8804f' : '#96703f';
+      c.fillRect(-8, -6, 16, 12);
+      c.strokeStyle = 'rgba(70,48,20,.55)'; c.lineWidth = 0.9;
+      c.beginPath(); c.moveTo(-8, -1); c.lineTo(8, 1); c.stroke();          // сгиб
+      c.fillStyle = 'rgba(210,190,140,.6)';
+      c.fillRect(-1.5, -6, 3, 12);                                        // скотч
+      c.restore();
+    }
+  },
+
+  barrel(c, rnd) {
+    groundShadow(c, 11, 7);
+    c.fillStyle = '#7b3f22';
+    roundRect(c, -10, -6.5, 20, 13, 3); c.fill();
+    c.fillStyle = 'rgba(148,82,44,.7)';                                   // ржавчина
+    roughBlob(c, rnd, (rnd() - 0.5) * 8, (rnd() - 0.5) * 5, 3.5, 6, 0.6); c.fill();
+    c.strokeStyle = '#4f2714'; c.lineWidth = 1.3;
+    c.beginPath(); c.moveTo(-4, -6.5); c.lineTo(-4, 6.5); c.moveTo(4, -6.5); c.lineTo(4, 6.5); c.stroke();
+    c.fillStyle = '#5e3019';
+    c.beginPath(); c.ellipse(10, 0, 2.6, 6.5, 0, 0, TAU); c.fill();
+    c.fillStyle = 'rgba(15,12,10,.35)';                                   // натекло
+    roughBlob(c, rnd, 14, 3, 5, 7, 0.5); c.fill();
+  },
+
+  scrap(c, rnd) {
+    c.fillStyle = '#7d858d';
+    roughBlob(c, rnd, -2, 0, 7.5, 5, 0.7); c.fill();
+    c.strokeStyle = 'rgba(190,198,206,.4)'; c.lineWidth = 0.9;
+    roughBlob(c, rnd, -2, 0, 7.5, 5, 0.7); c.stroke();
+    c.strokeStyle = '#5f666e'; c.lineWidth = 2.6; c.lineCap = 'round';   // обрезок трубы
+    c.beginPath(); c.moveTo(-9, 7); c.lineTo(9, 3 + rnd() * 4); c.stroke();
+    c.lineCap = 'butt';
+  },
+
+  oil(c, rnd) {
+    // Лужа: гладкие края и полупрозрачность, чтобы не путалась с камнем.
+    c.fillStyle = 'rgba(12,10,8,.26)';
+    for (let i = 0; i < 3; i++) { roughBlob(c, rnd, (rnd() - 0.5) * 10, (rnd() - 0.5) * 8, 7 + rnd() * 5, 12, 0.22); c.fill(); }
+    c.strokeStyle = 'rgba(130,100,170,.16)'; c.lineWidth = 1;             // радужная плёнка
+    c.beginPath(); c.arc(0, 0, 5, 0.3, 2.2); c.stroke();
+  },
+
+  grass(c, rnd) {
+    const colors = ['#7a9a46', '#8aae52', '#5f7f36'];
+    const tufts = 6 + (rnd() * 5 | 0);
+    c.lineWidth = 1.3; c.lineCap = 'round';
+    for (let i = 0; i < tufts; i++) {
+      const x = (rnd() - 0.5) * 24, y = (rnd() - 0.5) * 18;
+      c.strokeStyle = colors[(rnd() * colors.length) | 0];
+      c.beginPath();
+      for (let j = 0; j < 3; j++) {
+        const a = -Math.PI / 2 + (j - 1) * 0.5 + (rnd() - 0.5) * 0.3;
+        c.moveTo(x, y); c.lineTo(x + Math.cos(a) * 5.5, y + Math.sin(a) * 5.5);
+      }
+      c.stroke();
+    }
+    c.lineCap = 'butt';
+  },
+
+  papers(c, rnd) {
+    const n = 3 + (rnd() * 3 | 0);
+    for (let i = 0; i < n; i++) {
+      c.save();
+      c.translate((rnd() - 0.5) * 18, (rnd() - 0.5) * 14);
+      c.rotate(rnd() * TAU);
+      c.fillStyle = rnd() < 0.5 ? '#d8d4c6' : '#c9c4b4';
+      c.fillRect(-3, -4, 6, 8);
+      c.fillStyle = 'rgba(90,88,80,.5)';
+      c.fillRect(-2, -2, 4, 0.7); c.fillRect(-2, 0, 3.2, 0.7);
+      c.restore();
+    }
+  },
+
+  monitor(c, rnd) {
+    groundShadow(c, 8.5, 6);
+    c.fillStyle = '#23262b';
+    roundRect(c, -7, -5, 14, 10, 1.5); c.fill();
+    c.fillStyle = '#0e1216';
+    c.fillRect(-5.5, -3.5, 11, 7);
+    const hx = (rnd() - 0.5) * 6, hy = (rnd() - 0.5) * 4;            // разбитый экран
+    c.strokeStyle = 'rgba(150,175,200,.55)'; c.lineWidth = 0.6;
+    c.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const a = rnd() * TAU;
+      c.moveTo(hx, hy); c.lineTo(clamp(hx + Math.cos(a) * 6, -5.5, 5.5), clamp(hy + Math.sin(a) * 6, -3.5, 3.5));
+    }
+    c.stroke();
+    c.fillStyle = 'rgba(180,200,220,.5)';                              // осколки рядом
+    for (let i = 0; i < 3; i++) c.fillRect(8 + rnd() * 4, (rnd() - 0.5) * 8, 1.2, 1.2);
+  },
+
+  chair(c, rnd) {
+    groundShadow(c, 7, 6);
+    c.strokeStyle = '#555c66'; c.lineWidth = 1.4;                       // опрокинутый стул
+    c.beginPath();
+    for (let i = 0; i < 5; i++) { const a = (i / 5) * TAU + rnd() * 0.2; c.moveTo(0, 0); c.lineTo(Math.cos(a) * 7, Math.sin(a) * 7); }
+    c.stroke();
+    c.fillStyle = '#2d3440';
+    c.beginPath(); c.arc(0, 0, 4.6, 0, TAU); c.fill();
+    c.fillStyle = '#262c36';
+    c.fillRect(-5, 6, 10, 3);
+  },
+
+  crack(c, rnd) {
+    c.strokeStyle = 'rgba(0,0,0,.3)'; c.lineWidth = 1.1;
+    c.beginPath();
+    let x = -10, y = 0;
+    c.moveTo(x, y);
+    for (let i = 0; i < 5; i++) {
+      x += 3.5 + rnd() * 3; y += (rnd() - 0.5) * 6;
+      c.lineTo(x, y);
+      if (i === 2) { c.moveTo(x, y); c.lineTo(x + 3, y + 5 + rnd() * 3); c.moveTo(x, y); }
+    }
+    c.stroke();
+  },
+
+  stain(c, rnd) {
+    c.fillStyle = 'rgba(20,18,14,.16)';
+    roughBlob(c, rnd, 0, 0, 8 + rnd() * 6, 9, 0.35); c.fill();
+  },
+};
+
+function drawProps(c, props) {
+  // Сначала износ пола, поверх — предметы.
+  for (const wearPass of [true, false])
+    for (const p of props) {
+      if (p.wear !== wearPass) continue;
+      const rnd = mulberry32(Math.floor(p.seed * 4294967295));
+      c.save();
+      c.translate(p.x, p.y); c.rotate(p.a); c.scale(p.s, p.s);
+      PROP_DRAW[p.kind](c, rnd);
+      c.restore();
+    }
+}
+
 function viewTileRange() {
   const T = CFG.TILE, { w: vw, h: vh } = viewWorld();
   return {
@@ -3251,6 +3609,7 @@ function buildMapLayer() {
   c.stroke();
 
   drawFloorMarks(c);
+  drawProps(c, mapProps());
 
   for (let ty = 0; ty < MAP_H; ty++)
     for (let tx = 0; tx < MAP_W; tx++) {

@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 python3 build.py > /dev/null
 
 list="self-check level-tests switch-tests loadout-tests pen-tests arsenal-tests \
-gen-level-tests gen-validate tutorial-tests hints-tests armor-tests fx-tests bot-tests upgrade-tests \
+gen-level-tests gen-validate tutorial-tests hints-tests armor-tests fx-tests bot-tests upgrade-tests props-tests \
 integration-tests ai-tests draw-tests ttk-tests"
 [ -n "$1" ] && list="$1"
 
