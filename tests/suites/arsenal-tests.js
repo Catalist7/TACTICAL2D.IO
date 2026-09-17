@@ -148,6 +148,8 @@ say(player.slots.rifle === 'ak' && player.armor === 100 && owns('ak'),
   const replay = progress.money - before;
   say(replay === CFG.PAY_REPLAY, `повторное прохождение платит меньше: ${money(replay)}`);
   say(CFG.PAY_REPLAY < CFG.PAY_FIRST_CLEAR, 'и это заметно меньше первого');
+  say(CFG.PAY_FIRST_CLEAR === 1500 && CFG.PAY_REPLAY === 450,
+      `за победу платят втрое больше прежнего: ${money(CFG.PAY_FIRST_CLEAR)} и ${money(CFG.PAY_REPLAY)}`);
 }
 
 // ── Заложники прибавляют к выплате ───────────────────────────────────────
