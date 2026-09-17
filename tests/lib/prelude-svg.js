@@ -11,7 +11,8 @@
     const st = () => rec.stack[rec.stack.length - 1];
     const rec = {
       out, defsOut: [],
-      stack: [{ m: [1, 0, 0, 1, 0, 0], alpha: 1, fill: '#000', stroke: '#000', lw: 1, font: '', align: 'left' }],
+      stack: [{ m: [1, 0, 0, 1, 0, 0], alpha: 1, fill: '#000', stroke: '#000', lw: 1, font: '', align: 'left',
+                cap: 'butt', join: 'miter' }],
       path: [], px: 0, py: 0,
     };
     const mul = (a, b) => [a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1],
@@ -31,17 +32,20 @@
       if (!d) return;
       emit('path', isFill
         ? { d, fill: s.fill, 'fill-rule': 'nonzero' }
-        : { d, fill: 'none', stroke: s.stroke, 'stroke-width': num(s.lw) });
+        : { d, fill: 'none', stroke: s.stroke, 'stroke-width': num(s.lw),
+            'stroke-linecap': s.cap, 'stroke-linejoin': s.join });
     };
     const ctx = {
       canvas: el,
       get fillStyle() { return st().fill; }, set fillStyle(v) { st().fill = v; },
       get strokeStyle() { return st().stroke; }, set strokeStyle(v) { st().stroke = v; },
       get lineWidth() { return st().lw; }, set lineWidth(v) { st().lw = v; },
+      get lineCap() { return st().cap; }, set lineCap(v) { st().cap = v; },
+      get lineJoin() { return st().join; }, set lineJoin(v) { st().join = v; },
       get globalAlpha() { return st().alpha; }, set globalAlpha(v) { st().alpha = v; },
       set font(v) { st().font = v; }, get font() { return st().font; },
       set textAlign(v) { st().align = v; }, get textAlign() { return st().align; },
-      globalCompositeOperation: 'source-over', lineCap: 'butt', lineJoin: 'miter',
+      globalCompositeOperation: 'source-over',
       save() { rec.stack.push({ ...st() }); },
       restore() { if (rec.stack.length > 1) rec.stack.pop(); },
       setTransform(a, b, c, d, e, f) { st().m = [a, b, c, d, e, f]; },
@@ -53,11 +57,19 @@
       closePath() { rec.path.push('Z'); },
       moveTo(x, y) { rec.path.push(`M${num(x)} ${num(y)}`); rec.px = x; rec.py = y; },
       lineTo(x, y) { rec.path.push(`L${num(x)} ${num(y)}`); rec.px = x; rec.py = y; },
-      arc(x, y, r, a0, a1) {
-        const x0 = x + Math.cos(a0) * r, y0 = y + Math.sin(a0) * r;
-        rec.path.push(`M${num(x0)} ${num(y0)}`);
-        rec.path.push(`A${num(r)} ${num(r)} 0 1 1 ${num(x - Math.cos(a0) * r)} ${num(y - Math.sin(a0) * r)}`);
-        rec.path.push(`A${num(r)} ${num(r)} 0 1 1 ${num(x0)} ${num(y0)}`);
+      // Дуга как в холсте: с учётом углов и направления, а не всегда круг.
+      arc(x, y, r, a0 = 0, a1 = Math.PI * 2, ccw = false) {
+        const TAU2 = Math.PI * 2;
+        const p = a => `${num(x + Math.cos(a) * r)} ${num(y + Math.sin(a) * r)}`;
+        let d = a1 - a0;
+        if (!ccw && d < 0) d = ((d % TAU2) + TAU2) % TAU2;
+        if (ccw && d > 0) d = -((((-d) % TAU2) + TAU2) % TAU2);
+        if (Math.abs(d) >= TAU2 - 1e-6) {
+          rec.path.push(`M${p(a0)}`, `A${num(r)} ${num(r)} 0 1 1 ${p(a0 + Math.PI)}`, `A${num(r)} ${num(r)} 0 1 1 ${p(a0)}`);
+          return;
+        }
+        rec.path.push(`${rec.path.length ? 'L' : 'M'}${p(a0)}`);
+        rec.path.push(`A${num(r)} ${num(r)} 0 ${Math.abs(d) > Math.PI ? 1 : 0} ${d > 0 ? 1 : 0} ${p(a0 + d)}`);
       },
       ellipse(x, y, rx, ry, rot) {
         const c = Math.cos(rot), s = Math.sin(rot);
@@ -83,7 +95,8 @@
       },
       fillRect(x, y, w, h) { emit('rect', { x: num(x), y: num(y), width: num(w), height: num(h), fill: st().fill }); },
       strokeRect(x, y, w, h) { emit('rect', { x: num(x), y: num(y), width: num(w), height: num(h),
-        fill: 'none', stroke: st().stroke, 'stroke-width': num(st().lw) }); },
+        fill: 'none', stroke: st().stroke, 'stroke-width': num(st().lw),
+        'stroke-linejoin': st().join }); },
       clearRect: noop,
       setLineDash: noop, getLineDash: () => [],
       fillText(t, x, y) {

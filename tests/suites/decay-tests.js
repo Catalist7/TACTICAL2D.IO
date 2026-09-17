@@ -29,19 +29,19 @@ const maps = [
   { i: 0, label: '«Офис»' }, { i: 1, label: '«Комбинат»' },
   { i: 2, label: 'операция 3' }, { i: 4, label: 'операция 5' }, { i: 8, label: 'операция 9' },
 ];
-let totalWindows = 0, totalBreaches = 0, totalBeams = 0;
+let totalWindows = 0, totalBreaches = 0;
 
 for (const { i, label } of maps) {
   startLevel(i);
   const before = Array.from(grid).join('');
-  mapLayer = null; ceilingLayer = null; MAP_DECAY = null;
-  buildMapLayer(); buildCeilingLayer();
-  const { openings, ceiling } = MAP_DECAY;
+  mapLayer = null; MAP_DECAY = null;
+  buildMapLayer();
+  const { openings } = MAP_DECAY;
   say(Array.from(grid).join('') === before, `${label}: сетка карты не изменилась — окна и балки только рисуются`);
 
   const windows = openings.filter(o => o.kind === 'window'), breaches = openings.filter(o => o.kind === 'breach');
-  totalWindows += windows.length; totalBreaches += breaches.length; totalBeams += ceiling.length;
-  say(windows.length >= (label === '«Офис»' ? 4 : 2), `${label}: ${windows.length} окон, ${breaches.length} проломов, ${ceiling.length} балок под потолком`);
+  totalWindows += windows.length; totalBreaches += breaches.length;
+  say(windows.length >= (label === '«Офис»' ? 4 : 2), `${label}: ${windows.length} окон, ${breaches.length} проломов`);
 
   // Где окна.
   const marked = markedTiles();
@@ -71,45 +71,43 @@ for (const { i, label } of maps) {
   }
   say(leaks === 0, `${label}: лучи света обрываются на первой стене или ящике`);
 
-  // Балки перекрытия: от стены до стены, над проходимым пространством, не над двором.
-  const badBeams = ceiling.filter(b => {
-    const horiz = b.y1 === b.y2;
-    if (!horiz && b.x1 !== b.x2) return true;
-    const line = Math.floor((horiz ? b.y1 : b.x1) / T);
-    const from = Math.floor((horiz ? b.x1 : b.y1) / T), to = Math.floor((horiz ? b.x2 : b.y2) / T);
-    const at = k => (horiz ? cell(k, line) : cell(line, k));
-    for (let k = from + 1; k < to; k++) if (at(k) === WALL) return true;
-    return at(from) !== WALL || at(to) !== WALL;
-  });
-  say(badBeams.length === 0, `${label}: каждая балка упирается концами в стены и не проходит сквозь них`);
-  const yards = propZones().filter(z => z.kind === 'yard');
-  say(ceiling.every(b => !yards.some(z => {
-    const cx = (b.x1 + b.x2) / 2 / T, cy = (b.y1 + b.y2) / 2 / T;
-    return cx >= z.x0 && cx <= z.x1 + 1 && cy >= z.y0 && cy <= z.y1 + 1;
-  })), `${label}: над открытым двором перекрытия нет`);
-
   const snap = JSON.stringify(MAP_DECAY);
   startLevel(i); MAP_DECAY = null;
   say(JSON.stringify(mapDecay()) === snap, `${label}: окна, свет и балки на тех же местах при повторной загрузке`);
 }
 say(totalBreaches > 0, `проломы тоже встречаются: ${totalBreaches} на ${maps.length} картах`);
 
-// ── Упавшие балки на полу ────────────────────────────────────────────────
+// ── Средние балки на полу, всегда наискось ───────────────────────────────
 {
-  let beams = 0, bad = 0;
+  let beams = 0, offFloor = 0, tooStraight = 0, minLen = Infinity, maxLen = 0;
   for (let i = 2; i < 14; i++) {
     startLevel(i); MAP_PROPS = null;
     for (const p of mapProps()) {
       if (p.kind !== 'beam') continue;
       beams++;
-      const half = 26 * p.s;
-      for (const sgn of [1, -1]) {
-        const x = p.x + Math.cos(p.a) * half * sgn, y = p.y + Math.sin(p.a) * half * sgn;
-        if (cell(Math.floor(x / T), Math.floor(y / T)) !== FLOOR) bad++;
+      const half = PROPS.BEAM_HALF * p.s;
+      minLen = Math.min(minLen, half * 2); maxLen = Math.max(maxLen, half * 2);
+      for (const f of [-1, -0.5, 0, 0.5, 1]) {
+        const x = p.x + Math.cos(p.a) * half * f, y = p.y + Math.sin(p.a) * half * f;
+        if (cell(Math.floor(x / T), Math.floor(y / T)) !== FLOOR) offFloor++;
       }
+      const off = ((p.a % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2);
+      if (off < PROPS.BEAM_TILT - 1e-9 || off > Math.PI / 2 - PROPS.BEAM_TILT + 1e-9) tooStraight++;
     }
   }
-  say(beams >= 5 && bad === 0, `упавших балок за 12 карт: ${beams}, у всех оба конца на полу`);
+  say(beams >= 5, `упавших балок за 12 карт: ${beams}`);
+  say(offFloor === 0, 'каждая лежит на полу по всей длине');
+  say(tooStraight === 0, `ни одна не лежит вдоль стены: отклонение не меньше ${PROPS.BEAM_TILT} рад`);
+  say(minLen >= 2.4 * T && maxLen <= 3.5 * T,
+      `длина средняя: ${(minLen / T).toFixed(1)}–${(maxLen / T).toFixed(1)} клетки`);
+}
+
+// ── Балок под потолком больше нет ────────────────────────────────────────
+{
+  startLevel(4); MAP_DECAY = null;
+  say(!('ceiling' in mapDecay()), 'перекрытий в данных карты не осталось');
+  const html = require('fs').readFileSync(GAME_HTML, 'utf8');
+  say(!/ceilingLayer|drawCeilingBeams|BEAM_ALPHA/.test(html), 'в коде не осталось следов балок перекрытия');
 }
 
 // ── Порядок отрисовки ────────────────────────────────────────────────────
@@ -117,30 +115,17 @@ say(totalBreaches > 0, `проломы тоже встречаются: ${totalB
   startLevel(2); beginLive();
   // Игра зовёт функции по имени из своей области видимости — подменяем их там же.
   const order = [];
-  const real = { drawBots, drawDustMotes, drawCeilingBeams, drawFog, drawPlayer };
+  const real = { drawBots, drawDustMotes, drawFog, drawPlayer };
   drawBots = (...a) => { order.push('drawBots'); return real.drawBots(...a); };
   drawDustMotes = (...a) => { order.push('drawDustMotes'); return real.drawDustMotes(...a); };
-  drawCeilingBeams = (...a) => { order.push('drawCeilingBeams'); return real.drawCeilingBeams(...a); };
   drawFog = (...a) => { order.push('drawFog'); return real.drawFog(...a); };
   drawPlayer = (...a) => { order.push('drawPlayer'); return real.drawPlayer(...a); };
   render();
-  ({ drawBots, drawDustMotes, drawCeilingBeams, drawFog, drawPlayer } = real);
+  ({ drawBots, drawDustMotes, drawFog, drawPlayer } = real);
   const at = n => order.indexOf(n);
-  say(at('drawBots') >= 0 && at('drawBots') < at('drawDustMotes') && at('drawDustMotes') < at('drawCeilingBeams') &&
-      at('drawCeilingBeams') < at('drawFog') && at('drawFog') < at('drawPlayer'),
-      `балки над ботами и под тенью, игрок поверх: ${order.join(' → ')}`);
-}
-
-// ── Балки рисуются одним готовым слоем ───────────────────────────────────
-{
-  startLevel(4); beginLive();
-  ceilingLayer = null;
-  const images = [];
-  const real = ctx.drawImage;
-  ctx.drawImage = (img, ...rest) => { images.push(img); };
-  drawCeilingBeams(); drawCeilingBeams(); drawCeilingBeams();
-  ctx.drawImage = real;
-  say(images.length === 3 && images.every(im => im === ceilingLayer), 'слой балок строится один раз и переиспользуется каждый кадр');
+  say(at('drawBots') >= 0 && at('drawBots') < at('drawDustMotes') &&
+      at('drawDustMotes') < at('drawFog') && at('drawFog') < at('drawPlayer'),
+      `пыль поверх боя, но под тенью, игрок поверх всего: ${order.join(' → ')}`);
 }
 
 // ── Свет в тени и враги ──────────────────────────────────────────────────
@@ -230,8 +215,14 @@ say(totalBreaches > 0, `проломы тоже встречаются: ${totalB
   Object.assign(player, { alive: true, x: spot.x, y: spot.y, ang: 0 });
   say(playerSees(bot.x, bot.y), 'враг в поле зрения');
 
+  // Тень под ногами — эллипс радиусом с фигуру, вспышка ранения — круг r+7.
+  // Ни того, ни другого в контуре быть не должно.
+  const shapes = [];
   const log = [];
-  const real = { fill: ctx.fill, stroke: ctx.stroke, fillRect: ctx.fillRect, op: drawOperative };
+  const real = { fill: ctx.fill, stroke: ctx.stroke, fillRect: ctx.fillRect, op: drawOperative,
+                 ellipse: ctx.ellipse, arc: ctx.arc };
+  ctx.ellipse = (x, y, rx, ry) => shapes.push({ pass, kind: 'ellipse', rx, ry });
+  ctx.arc = (x, y, rr) => shapes.push({ pass, kind: 'arc', rr });
   let pass = null;
   drawOperative = (c, e, o) => { pass = o.outline ? 'outline' : 'normal'; real.op(c, e, o); };
   ctx.fill = () => log.push({ pass, kind: 'fill', color: ctx.fillStyle, alpha: ctx.globalAlpha, lw: ctx.lineWidth });
@@ -245,11 +236,18 @@ say(totalBreaches > 0, `проломы тоже встречаются: ${totalB
   say(hsl(COL.enemyOutline).s > 0.8 && parseInt(COL.enemyOutline.slice(1, 3), 16) > 200,
       `цвет контура — ярко-красный ${COL.enemyOutline}`);
   say(outline.every(l => l.color === COL.enemyOutline && l.alpha === 1), 'весь контур сплошной красный, без прозрачности');
-  const fills = arr => arr.filter(l => l.kind === 'fill').length;
-  say(fills(outline) === fills(normal) - 2,
-      'тень под ногами и вспышка ранения в контур не попадают');
+  say(outline.length < normal.length * 1.6,
+      `контур рисует силуэт, а не всю мелочь: ${outline.length} против ${normal.length} вызовов`);
   say(outline.filter(l => l.kind !== 'fillRect').every(l => l.lw >= CFG.ENEMY_OUTLINE * 2),
       `контур шире фигуры на ${CFG.ENEMY_OUTLINE} с каждой стороны`);
+  {
+    const inOutline = shapes.filter(sh => sh.pass === 'outline');
+    const inNormal = shapes.filter(sh => sh.pass === 'normal');
+    const shadow = sh => sh.kind === 'ellipse' && Math.abs(sh.rx - bot.r) < 0.01;
+    const hurt = sh => sh.kind === 'arc' && Math.abs(sh.rr - (bot.r + 7)) < 0.01;
+    say(inNormal.some(shadow) && !inOutline.some(shadow), 'тень под ногами в контур не попадает');
+    say(inNormal.some(hurt) && !inOutline.some(hurt), 'вспышка ранения в контур не попадает');
+  }
 
   log.length = 0;
   hostages.forEach(h => { h.alive = true; h.x = spot.x + T; h.y = spot.y; });
@@ -262,6 +260,7 @@ say(totalBreaches > 0, `проломы тоже встречаются: ${totalB
   drawBots();
   say(log.length === 0, 'враг вне поля зрения не рисуется вовсе — и контура нет');
 
-  Object.assign(ctx, { fill: real.fill, stroke: real.stroke, fillRect: real.fillRect });
+  Object.assign(ctx, { fill: real.fill, stroke: real.stroke, fillRect: real.fillRect,
+                       ellipse: real.ellipse, arc: real.arc });
   drawOperative = real.op;
 }

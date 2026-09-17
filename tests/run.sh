@@ -13,12 +13,18 @@ integration-tests ai-tests draw-tests ttk-tests"
 
 pass=0; fail=0
 for name in $list; do
-  out=$(node "build/$name.js" 2>&1) || true
+  code=0
+  out=$(node "build/$name.js" 2>&1) || code=$?
   p=$(printf '%s\n' "$out" | grep -c '✓' || true)
   f=$(printf '%s\n' "$out" | grep -c '✗' || true)
   printf '%s\n' "$out" > "build/$name.out.txt"
-  printf '%-18s ✓%-5s ✗%s\n' "$name" "$p" "$f"
-  [ "$f" -gt 0 ] && printf '%s\n' "$out" | grep '✗' | sed 's/^/    /'
+  # Набор может не провалить проверку, а упасть с исключением — тогда он просто
+  # выдаёт меньше строк. Ненулевой код выхода без крестиков — это падение.
+  crash=''
+  if [ "$code" -ne 0 ] && [ "$f" -eq 0 ]; then crash=' ПАДЕНИЕ'; f=1; fi
+  printf '%-18s ✓%-5s ✗%s%s\n' "$name" "$p" "$f" "$crash"
+  [ -n "$crash" ] && printf '%s\n' "$out" | tail -12 | sed 's/^/    /'
+  [ -z "$crash" ] && [ "$f" -gt 0 ] && printf '%s\n' "$out" | grep '✗' | sed 's/^/    /'
   pass=$((pass + p)); fail=$((fail + f))
 done
 echo "ИТОГО: $pass пройдено, $fail провалов"

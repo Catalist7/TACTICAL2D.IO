@@ -405,7 +405,6 @@ let SECTIONS = [], GATES = [], MAP_MARKS = [], MAP_NAME = '', OUTDOOR_X = 0, ROO
 let OUTDOOR_RECT = null;   // двор прямоугольником — у змейки он может быть где угодно
 let MAP_PROPS = null;      // мусор на полу: считается при первой отрисовке карты
 let MAP_DECAY = null;      // окна, проломы, свет и балки: там же
-let ceilingLayer = null;   // балки перекрытия одним слоем
 
 const gi = (x, y) => y * MAP_W + x;
 const inBounds = (x, y) => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H;
@@ -591,7 +590,6 @@ function loadMap(id, enemyOverride) {
   mapLayer = miniLayer = null;   // слои перерисуются под новую карту
   MAP_PROPS = null;
   MAP_DECAY = null;
-  ceilingLayer = null;
 
   clearKeyTiles();
 }
@@ -2790,24 +2788,28 @@ function drawWeaponModel(c, wid) {
    головы и землистой палитрой, чтобы в бою различать, кого уже зацепил. */
 const CT_KIT = {
   skin: '#c89b73', cloth: '#2f4159', clothDark: '#1f2c3a', clothLight: '#3d5675',
-  rig: '#1b2734', pouch: '#2c3e54', boots: '#151c25',
+  rig: '#1b2734', pouch: '#2c3e54', boots: '#151c25', glove: '#1a2430',
   head: 'helmet', cap: '#35485f', capRim: '#52709a', visor: '#8ad6ff',
-  accent: '#54a8ff',
+  accent: '#54a8ff', gear: { radio: true },
 };
 
 const T_KITS = [
   { skin: '#b98a60', cloth: '#4b4234', clothDark: '#352e20', clothLight: '#5d5341',
     rig: '#2b2418', pouch: '#3c3423', boots: '#1b1610',
-    head: 'balaclava', cap: '#24222a', capRim: '#34313c', visor: null, accent: '#ff7a45' },
+    head: 'balaclava', cap: '#24222a', capRim: '#34313c', visor: null, accent: '#ff7a45',
+    glove: '#241d14', gear: { beltAmmo: true } },
   { skin: '#a8794f', cloth: '#55452c', clothDark: '#3c311e', clothLight: '#68563a',
     rig: '#332715', pouch: '#45351d', boots: '#1d1712',
-    head: 'bandana', cap: '#8f3226', capRim: '#b8412f', visor: null, accent: '#ff7a45' },
+    head: 'bandana', cap: '#8f3226', capRim: '#b8412f', visor: null, accent: '#ff7a45',
+    glove: '#2a2116', hair: '#241b12', gear: {} },
   { skin: '#c2926a', cloth: '#3f4a36', clothDark: '#2b3325', clothLight: '#4f5c43',
     rig: '#232c1c', pouch: '#323d28', boots: '#171c13',
-    head: 'cap', cap: '#2a3323', capRim: '#1d241a', visor: null, accent: '#ff7a45' },
+    head: 'cap', cap: '#2a3323', capRim: '#1d241a', visor: null, accent: '#ff7a45',
+    glove: '#1c2417', gear: { backpack: true } },
   { skin: '#9d7048', cloth: '#473a3a', clothDark: '#322929', clothLight: '#584848',
     rig: '#2a2020', pouch: '#382c2c', boots: '#1a1414',
-    head: 'hood', cap: '#3a2f2f', capRim: '#4c3d3d', visor: null, accent: '#ff7a45' },
+    head: 'hood', cap: '#3a2f2f', capRim: '#4c3d3d', visor: null, accent: '#ff7a45',
+    glove: '#241c1c', gear: { radio: true } },
 ];
 
 const HOSTAGE_KITS = [
@@ -2847,126 +2849,266 @@ function blobPath(c, pts) {
 }
 
 /** Рука двумя сегментами: локоть отводится перпендикулярно линии плечо→кисть. */
-function drawArm(c, sx, sy, hx, hy, bend, color, width) {
+/** Свет в мире всегда с одной стороны — блики на бойцах не пляшут при поворотах. */
+const LIGHT_ANG = -2.2;
+
+/** Рука из двух звеньев с локтем и кисть в перчатке. */
+function drawArm(c, sx, sy, hx, hy, bend, kit, width, detail = true) {
   const dx = hx - sx, dy = hy - sy;
   const len = Math.hypot(dx, dy) || 1;
   const ex = (sx + hx) / 2 - dy / len * bend;
   const ey = (sy + hy) / 2 + dx / len * bend;
-  c.strokeStyle = color;
-  c.lineWidth = width;
   c.lineCap = 'round';
   c.lineJoin = 'round';
+  c.strokeStyle = kit.clothDark;                 // тёмный контур рукава
+  c.lineWidth = width * 1.32;
+  c.beginPath(); c.moveTo(sx, sy); c.lineTo(ex, ey); c.lineTo(hx, hy); c.stroke();
+  c.strokeStyle = kit.clothLight;
+  c.lineWidth = width;
+  c.beginPath(); c.moveTo(sx, sy); c.lineTo(ex, ey); c.lineTo(hx, hy); c.stroke();
+  if (!detail) return;
+  c.strokeStyle = kit.glove || kit.boots;        // перчатка
+  c.lineWidth = width * 0.96;
   c.beginPath();
-  c.moveTo(sx, sy); c.lineTo(ex, ey); c.lineTo(hx, hy);
+  c.moveTo(ex + (hx - ex) * 0.62, ey + (hy - ey) * 0.62); c.lineTo(hx, hy);
   c.stroke();
 }
 
-function drawLegs(c, r, kit, phase, amp) {
+/** Ноги: бедро, голень и ботинок с подошвой. Шаг разводит их в стороны. */
+function drawLegs(c, r, kit, phase, amp, detail = true) {
   for (const side of [-1, 1]) {
     const swing = Math.sin(phase + (side > 0 ? 0 : Math.PI)) * amp;
     c.save();
-    c.translate(swing, side * r * 0.40);
+    c.translate(swing, side * r * 0.42);
     c.fillStyle = kit.clothDark;
-    roundRect(c, -r * 0.80, -r * 0.25, r * 1.02, r * 0.50, r * 0.23); c.fill();
+    roundRect(c, -r * 0.78, -r * 0.26, r * 1.0, r * 0.52, r * 0.24); c.fill();
+    if (detail) {
+      c.fillStyle = kit.cloth;                   // наколенник
+      roundRect(c, -r * 0.16, -r * 0.2, r * 0.3, r * 0.4, r * 0.12); c.fill();
+    }
     c.fillStyle = kit.boots;
-    roundRect(c, r * 0.02, -r * 0.23, r * 0.34, r * 0.46, r * 0.15); c.fill();
+    roundRect(c, r * 0.06, -r * 0.24, r * 0.4, r * 0.48, r * 0.16); c.fill();
+    if (detail) {
+      c.fillStyle = 'rgba(255,255,255,.10)';     // рант подошвы
+      roundRect(c, r * 0.1, -r * 0.2, r * 0.32, r * 0.1, r * 0.05); c.fill();
+    }
     c.restore();
   }
 }
 
-function drawTorso(c, r, kit, shoulders) {
+/** Корпус: широкие плечи, сужение к поясу, тёмный кант и плечевые накладки. */
+function drawTorso(c, r, kit, shoulders, detail = true) {
   const w = shoulders;
   blobPath(c, [
-    [ r * 0.70,  0],
-    [ r * 0.52,  r * 0.46],
-    [ r * 0.04,  r * 0.88 * w],
-    [-r * 0.62,  r * 0.58],
-    [-r * 0.86,  0],
-    [-r * 0.62, -r * 0.58],
-    [ r * 0.04, -r * 0.88 * w],
-    [ r * 0.52, -r * 0.46],
+    [ r * 0.66,  r * 0.30],
+    [ r * 0.30,  r * 0.86 * w],
+    [-r * 0.34,  r * 0.80 * w],
+    [-r * 0.84,  r * 0.44],
+    [-r * 0.90,  0],
+    [-r * 0.84, -r * 0.44],
+    [-r * 0.34, -r * 0.80 * w],
+    [ r * 0.30, -r * 0.86 * w],
+    [ r * 0.66, -r * 0.30],
   ]);
   c.fillStyle = kit.cloth;
   c.fill();
-  c.lineWidth = Math.max(1, r * 0.12);
+  c.lineWidth = Math.max(1, r * 0.13);
   c.strokeStyle = kit.clothDark;
   c.stroke();
-  // Блик по ведущему плечу — подсказывает, куда смотрит боец.
-  c.fillStyle = kit.clothLight;
-  roundRect(c, r * 0.16, -r * 0.62, r * 0.26, r * 1.24, r * 0.12);
-  c.fill();
+  if (!detail) return;
+  for (const side of [-1, 1]) {                  // плечевые накладки
+    c.fillStyle = kit.clothLight;
+    c.save();
+    c.translate(r * 0.1, side * r * 0.66 * w);
+    c.rotate(side * 0.18);
+    roundRect(c, -r * 0.28, -r * 0.17, r * 0.56, r * 0.34, r * 0.16); c.fill();
+    c.restore();
+  }
+  c.fillStyle = 'rgba(0,0,0,.16)';               // тень под подбородком
+  roundRect(c, r * 0.44, -r * 0.34, r * 0.22, r * 0.68, r * 0.1); c.fill();
 }
 
-function drawRig(c, r, kit, armored) {
+/** Разгрузка: плита, лямки через плечи, подсумки с клапанами, ремень, рация. */
+function drawRig(c, r, kit, armored, detail = true) {
   if (!kit.rig) return;
+  const gear = kit.gear || {};
+  if (detail) {
+    c.strokeStyle = kit.rig;                     // лямки
+    c.lineWidth = Math.max(1, r * 0.14);
+    for (const side of [-1, 1]) {
+      c.beginPath();
+      c.moveTo(-r * 0.5, side * r * 0.52);
+      c.lineTo(r * 0.16, side * r * 0.3);
+      c.stroke();
+    }
+  }
   c.fillStyle = kit.rig;
-  roundRect(c, -r * 0.30, -r * 0.54, r * 0.84, r * 1.08, r * 0.20); c.fill();
+  roundRect(c, -r * 0.34, -r * 0.5, r * 0.8, r * 1.0, r * 0.18); c.fill();
   c.fillStyle = kit.pouch;
   for (let i = -1; i <= 1; i++) {
-    roundRect(c, -r * 0.12, i * r * 0.34 - r * 0.12, r * 0.28, r * 0.24, r * 0.07);
+    roundRect(c, -r * 0.16, i * r * 0.32 - r * 0.13, r * 0.34, r * 0.26, r * 0.08);
     c.fill();
+    if (!detail) continue;
+    c.fillStyle = 'rgba(0,0,0,.35)';             // клапан подсумка
+    roundRect(c, -r * 0.16, i * r * 0.32 - r * 0.13, r * 0.34, r * 0.08, r * 0.04); c.fill();
+    c.fillStyle = kit.pouch;
+  }
+  if (detail && gear.radio) {                    // рация с антенной на плече
+    c.fillStyle = kit.boots;
+    roundRect(c, -r * 0.34, -r * 0.62, r * 0.26, r * 0.3, r * 0.08); c.fill();
+    c.strokeStyle = kit.boots;
+    c.lineWidth = Math.max(1, r * 0.06);
+    c.beginPath(); c.moveTo(-r * 0.24, -r * 0.6); c.lineTo(-r * 0.52, -r * 0.94); c.stroke();
+  }
+  if (detail && gear.beltAmmo) {                 // лента с патронами через грудь
+    c.strokeStyle = kit.accent;
+    c.lineWidth = Math.max(1, r * 0.1);
+    c.globalAlpha = 0.5;
+    c.beginPath(); c.moveTo(-r * 0.5, -r * 0.5); c.lineTo(r * 0.3, r * 0.5); c.stroke();
+    c.globalAlpha = 1;
   }
   if (armored) {
     c.strokeStyle = 'rgba(180,215,255,.45)';
     c.lineWidth = Math.max(1, r * 0.09);
-    roundRect(c, -r * 0.30, -r * 0.54, r * 0.84, r * 1.08, r * 0.20);
+    roundRect(c, -r * 0.34, -r * 0.5, r * 0.8, r * 1.0, r * 0.18);
     c.stroke();
   }
 }
 
-function drawHead(c, r, kit) {
-  const hx = r * 0.30;
+/** Пара глаз на открытом лице. */
+function eyes(c, x, R) {
+  c.fillStyle = 'rgba(28,24,20,.85)';
+  for (const sy of [-1, 1]) {
+    c.beginPath(); c.ellipse(x, sy * R * 0.3, R * 0.13, R * 0.1, 0, 0, TAU); c.fill();
+  }
+}
+
+/** Голова с гарнитурой: шлем с наушниками и прибором, балаклава, бандана,
+ *  кепка, капюшон или гражданская причёска. */
+function drawHead(c, r, kit, detail = true) {
+  const hx = r * 0.34, R = r * 0.44;
   c.fillStyle = kit.skin;
-  c.beginPath(); c.ellipse(hx, 0, r * 0.52, r * 0.46, 0, 0, TAU); c.fill();
+  c.beginPath(); c.ellipse(hx, 0, R, R * 0.92, 0, 0, TAU); c.fill();
 
   switch (kit.head) {
     case 'helmet':
+      if (detail) {                              // наушники по бокам
+        c.fillStyle = kit.boots;
+        for (const side of [-1, 1]) {
+          roundRect(c, hx - r * 0.16, side * R * 0.78 - r * 0.16, r * 0.32, r * 0.32, r * 0.1);
+          c.fill();
+        }
+      }
       c.fillStyle = kit.cap;
-      c.beginPath(); c.ellipse(hx - r * 0.05, 0, r * 0.55, r * 0.50, 0, 0, TAU); c.fill();
+      c.beginPath(); c.ellipse(hx - r * 0.05, 0, R * 1.1, R, 0, 0, TAU); c.fill();
       c.strokeStyle = kit.capRim;
-      c.lineWidth = Math.max(1, r * 0.10);
-      c.beginPath(); c.ellipse(hx - r * 0.05, 0, r * 0.48, r * 0.44, 0, 0, TAU); c.stroke();
+      c.lineWidth = Math.max(1, r * 0.09);
+      c.beginPath(); c.ellipse(hx - r * 0.05, 0, R * 0.95, R * 0.86, 0, 0, TAU); c.stroke();
+      if (detail) {                              // крепление прибора ночного видения
+        c.fillStyle = kit.capRim;
+        roundRect(c, hx + R * 0.62, -r * 0.08, r * 0.18, r * 0.16, r * 0.05); c.fill();
+      }
       c.strokeStyle = kit.visor;
-      c.lineWidth = Math.max(1, r * 0.13);
-      c.beginPath(); c.arc(hx, 0, r * 0.42, -0.8, 0.8); c.stroke();
+      c.lineWidth = Math.max(1, r * 0.08);
+      c.beginPath(); c.arc(hx, 0, R * 0.8, -0.6, 0.6); c.stroke();
+      if (detail) {                              // микрофон гарнитуры
+        c.strokeStyle = kit.boots;
+        c.lineWidth = Math.max(1, r * 0.06);
+        c.beginPath(); c.moveTo(hx - r * 0.05, R * 0.8); c.lineTo(hx + R * 0.7, R * 0.4); c.stroke();
+      }
       break;
 
     case 'balaclava':
       c.fillStyle = kit.cap;
-      c.beginPath(); c.ellipse(hx - r * 0.02, 0, r * 0.54, r * 0.48, 0, 0, TAU); c.fill();
-      c.fillStyle = 'rgba(245,248,255,.78)';
+      c.beginPath(); c.ellipse(hx - r * 0.02, 0, R * 1.06, R * 0.96, 0, 0, TAU); c.fill();
+      c.fillStyle = 'rgba(0,0,0,.4)';            // прорезь для глаз
+      roundRect(c, hx + R * 0.1, -R * 0.52, R * 0.62, R * 1.04, R * 0.2); c.fill();
+      c.fillStyle = 'rgba(245,248,255,.85)';
       for (const sy of [-1, 1]) {
-        c.beginPath();
-        c.ellipse(hx + r * 0.22, sy * r * 0.17, r * 0.11, r * 0.07, 0, 0, TAU);
-        c.fill();
+        c.beginPath(); c.ellipse(hx + R * 0.42, sy * R * 0.3, R * 0.16, R * 0.12, 0, 0, TAU); c.fill();
+      }
+      if (detail) {                              // складки ткани
+        c.strokeStyle = 'rgba(0,0,0,.25)';
+        c.lineWidth = Math.max(1, r * 0.05);
+        c.beginPath(); c.arc(hx - r * 0.2, 0, R * 0.7, -1.1, 1.1); c.stroke();
       }
       break;
 
     case 'bandana':
-      c.fillStyle = kit.cap;
-      c.beginPath(); c.ellipse(hx - r * 0.10, 0, r * 0.48, r * 0.48, 0, 0, TAU); c.fill();
-      c.fillStyle = kit.capRim;
-      roundRect(c, hx - r * 0.86, -r * 0.13, r * 0.36, r * 0.26, r * 0.1); c.fill();
+      c.fillStyle = kit.hair || '#2a2018';
+      c.beginPath(); c.ellipse(hx - r * 0.12, 0, R * 0.98, R * 0.94, 0, 0, TAU); c.fill();
+      c.fillStyle = kit.cap;                     // повязка поперёк лба
+      roundRect(c, hx - R * 0.34, -R * 0.98, R * 0.38, R * 1.96, R * 0.14); c.fill();
+      eyes(c, hx + R * 0.5, R);
+      if (detail) {
+        c.fillStyle = kit.capRim;                // узел и хвост сзади
+        roundRect(c, hx - R * 1.5, -R * 0.26, R * 0.7, R * 0.52, R * 0.16); c.fill();
+        c.fillStyle = 'rgba(0,0,0,.2)';
+        roundRect(c, hx - R * 0.2, -R * 1.0, R * 0.6, R * 0.34, R * 0.12); c.fill();
+      }
       break;
 
     case 'cap':
-      c.fillStyle = kit.cap;
-      c.beginPath(); c.ellipse(hx - r * 0.06, 0, r * 0.50, r * 0.46, 0, 0, TAU); c.fill();
-      c.fillStyle = kit.capRim;
-      roundRect(c, hx + r * 0.26, -r * 0.33, r * 0.36, r * 0.66, r * 0.13); c.fill();
+      c.fillStyle = kit.skin;
+      c.beginPath(); c.ellipse(hx, 0, R, R * 0.92, 0, 0, TAU); c.fill();
+      c.fillStyle = kit.cap;                     // тулья
+      c.beginPath(); c.ellipse(hx - r * 0.08, 0, R * 1.0, R * 0.94, 0, 0, TAU); c.fill();
+      eyes(c, hx + R * 0.46, R);
+      c.fillStyle = kit.capRim;                  // козырёк
+      roundRect(c, hx + R * 0.66, -R * 0.54, R * 0.5, R * 1.08, R * 0.22); c.fill();
+      if (detail) {
+        c.fillStyle = 'rgba(0,0,0,.3)';
+        roundRect(c, hx + R * 0.5, -R * 0.62, R * 0.2, R * 1.24, R * 0.1); c.fill();
+      }
       break;
 
     case 'hood':
-      c.fillStyle = kit.capRim;
-      c.beginPath(); c.ellipse(hx - r * 0.20, 0, r * 0.70, r * 0.60, 0, 0, TAU); c.fill();
-      c.fillStyle = kit.cap;
-      c.beginPath(); c.ellipse(hx - r * 0.02, 0, r * 0.47, r * 0.41, 0, 0, TAU); c.fill();
+      c.fillStyle = kit.capRim;                  // капюшон
+      c.beginPath(); c.ellipse(hx - r * 0.22, 0, R * 1.45, R * 1.22, 0, 0, TAU); c.fill();
+      c.fillStyle = 'rgba(0,0,0,.45)';           // тень внутри капюшона
+      c.beginPath(); c.ellipse(hx - r * 0.02, 0, R * 1.02, R * 0.88, 0, 0, TAU); c.fill();
+      c.fillStyle = kit.skin;
+      c.beginPath(); c.ellipse(hx + r * 0.06, 0, R * 0.74, R * 0.66, 0, 0, TAU); c.fill();
+      eyes(c, hx + R * 0.36, R * 0.8);
+      if (detail) {
+        c.fillStyle = kit.cap;                   // шнурки капюшона
+        for (const sy of [-1, 1]) {
+          c.beginPath(); c.arc(hx + R * 0.3, sy * R * 0.5, R * 0.12, 0, TAU); c.fill();
+        }
+      }
       break;
 
-    default:   // гражданский — просто волосы
+    default:                                     // гражданский: волосы и уши
       c.fillStyle = kit.cap;
-      c.beginPath(); c.ellipse(hx - r * 0.16, 0, r * 0.45, r * 0.45, 0, 0, TAU); c.fill();
+      c.beginPath(); c.ellipse(hx - r * 0.14, 0, R * 1.0, R * 0.98, 0, 0, TAU); c.fill();
+      eyes(c, hx + R * 0.52, R);
+      if (detail) {
+        c.fillStyle = kit.skin;
+        for (const sy of [-1, 1]) {
+          c.beginPath(); c.ellipse(hx - r * 0.04, sy * R * 0.92, R * 0.16, R * 0.2, 0, 0, TAU); c.fill();
+        }
+      }
   }
+}
+
+/** Ранец за спиной — у кого он есть по снаряжению. */
+function drawBackpack(c, r, kit, detail = true) {
+  c.fillStyle = kit.clothDark;
+  roundRect(c, -r * 1.05, -r * 0.52, r * 0.5, r * 1.04, r * 0.18); c.fill();
+  if (!detail) return;
+  c.fillStyle = 'rgba(0,0,0,.25)';
+  roundRect(c, -r * 0.95, -r * 0.34, r * 0.3, r * 0.68, r * 0.1); c.fill();
+}
+
+/** Блик по краю фигуры со стороны света — одинаковый для всех, куда бы боец
+ *  ни смотрел: угол света переводится в местные координаты. */
+function rimLight(c, r, ang) {
+  c.save();
+  c.rotate(ang);
+  c.strokeStyle = 'rgba(255,246,220,.13)';
+  c.lineWidth = Math.max(1, r * 0.11);
+  c.beginPath(); c.arc(0, 0, r * 0.84, -0.5, 0.5); c.stroke();
+  c.restore();
 }
 
 /* ── Сборка бойца ─────────────────────────────────────────────────────────
@@ -2983,6 +3125,8 @@ function drawOperative(c, e, opts = {}) {
   const reloadT = opts.reloadT || 0;
   const crouch = opts.crouch ? 0.88 : 1;
   const breathe = Math.sin(performance.now() / 700 + (e.idle || 0)) * r * 0.018;
+  const detail = !opts.outline;               // в контур мелочь не идёт: силуэт от неё не меняется
+  const gear = kit.gear || {};
 
   c.save();
   c.translate(e.x, e.y);
@@ -3003,14 +3147,15 @@ function drawOperative(c, e, opts = {}) {
   c.rotate(e.ang);
   c.scale(crouch, crouch);
 
-  drawLegs(c, r, kit, phase, r * 0.30 * pace);
+  if (gear.backpack) drawBackpack(c, r, kit, detail);
+  drawLegs(c, r, kit, phase, r * 0.30 * pace, detail);
   c.save();
   c.translate(-rec * r * 0.14, 0);                    // отдача толкает корпус назад
-  drawTorso(c, r + breathe, kit, 1 - rec * 0.06);
-  drawRig(c, r, kit, e.armor > 0);
+  drawTorso(c, r + breathe, kit, 1 - rec * 0.06, detail);
+  drawRig(c, r, kit, e.armor > 0, detail);
   c.restore();
+  if (detail) rimLight(c, r, LIGHT_ANG - e.ang);      // свет всегда с одной стороны мира
 
-  const armColor = kit.clothLight;
   const armW = Math.max(1.6, r * 0.30);
   const shoulderX = r * 0.04;
   const shoulderY = r * 0.76;
@@ -3025,15 +3170,15 @@ function drawOperative(c, e, opts = {}) {
     const gpt = (px, py) => [gripX + (px * cs - py * sn) * s, gripY + (px * sn + py * cs) * s];
 
     const [mhx, mhy] = gpt(0, 0);
-    drawArm(c, shoulderX, shoulderY, mhx, mhy, r * 0.24, armColor, armW);
+    drawArm(c, shoulderX, shoulderY, mhx, mhy, r * 0.24, kit, armW, detail);
 
     if (gun.fore !== null) {
       // На перезарядке вторая рука уходит к магазину, а не держит цевьё.
       const off = reloadT > 0 ? gpt(gun.fore * 0.35, 4.2) : gpt(gun.fore, -1.2);
-      drawArm(c, shoulderX, -shoulderY, off[0], off[1], -r * 0.30, armColor, armW);
+      drawArm(c, shoulderX, -shoulderY, off[0], off[1], -r * 0.30, kit, armW, detail);
     } else {
       const off = gpt(-1.5, -3.4);
-      drawArm(c, shoulderX, -shoulderY, off[0], off[1], -r * 0.22, armColor, armW);
+      drawArm(c, shoulderX, -shoulderY, off[0], off[1], -r * 0.22, kit, armW, detail);
     }
 
     c.save();
@@ -3043,16 +3188,19 @@ function drawOperative(c, e, opts = {}) {
     drawWeaponModel(c, opts.weapon);
     c.restore();
 
-    // Кисти поверх оружия.
-    c.fillStyle = kit.skin;
+    // Кисти в перчатках поверх оружия, с накладкой на костяшках.
     for (const [hx, hy] of [gpt(0, 0), gun.fore !== null ? gpt(gun.fore, -1.2) : gpt(-1.5, -3.4)]) {
-      c.beginPath(); c.arc(hx, hy, r * 0.17, 0, TAU); c.fill();
+      c.fillStyle = kit.glove || kit.boots;
+      c.beginPath(); c.arc(hx, hy, r * 0.19, 0, TAU); c.fill();
+      if (!detail) continue;
+      c.fillStyle = 'rgba(255,255,255,.12)';
+      c.beginPath(); c.arc(hx + r * 0.05, hy - r * 0.05, r * 0.09, 0, TAU); c.fill();
     }
   } else if (opts.pose === 'surrender') {
     // Руки за головой: локти широко разведены.
     for (const side of [1, -1]) {
       drawArm(c, shoulderX, side * shoulderY, r * 0.48, side * r * 0.50,
-              side * r * 0.62, armColor, armW);
+              side * r * 0.62, kit, armW, detail);
       c.fillStyle = kit.skin;
       c.beginPath(); c.arc(r * 0.48, side * r * 0.50, r * 0.16, 0, TAU); c.fill();
     }
@@ -3061,13 +3209,13 @@ function drawOperative(c, e, opts = {}) {
     for (const side of [1, -1]) {
       const sw = Math.sin(phase + (side > 0 ? Math.PI : 0)) * r * 0.22 * pace;
       drawArm(c, shoulderX, side * shoulderY, r * 0.10 + sw, side * r * 0.66,
-              side * r * 0.22, armColor, armW);
+              side * r * 0.22, kit, armW, detail);
       c.fillStyle = kit.skin;
       c.beginPath(); c.arc(r * 0.10 + sw, side * r * 0.66, r * 0.15, 0, TAU); c.fill();
     }
   }
 
-  drawHead(c, r, kit);
+  drawHead(c, r, kit, detail);
   c.restore();
 }
 
@@ -3218,6 +3366,8 @@ const PROP_SETS = {
   default:   { papers: 2, cardboard: 2, trash: 3, chair: 1, monitor: 1, rubble: 1, tire: 1 },
 };
 const PROPS = {
+  BEAM_HALF: 40,      // половина длины упавшей балки до масштаба: выходит 2.5–3.3 клетки
+  BEAM_TILT: 0.26,    // ближе этого к осям балка не ложится — она всегда наискось
   DENSITY: 0.045,     // предметов на клетку пола: 8–12 на помещение
   WEAR: 0.014,        // трещин и пятен на клетку пола
   GAP: 30,            // между предметами, px
@@ -3297,12 +3447,18 @@ function scatterProps() {
         const x = (tx + r(0.2, 0.8)) * T, y = (ty + r(0.2, 0.8)) * T;
         if (!free(x, y, !wear)) continue;
         const kind = wear ? (rnd() < 0.6 ? 'crack' : 'stain') : pickWeighted(set);
-        const a = r(0, TAU), sc = r(...PROPS.SCALE);
+        let a = r(0, TAU);
+        const sc = r(...PROPS.SCALE);
         if (kind === 'beam') {
-          // Упавшая балка длинная: оба конца тоже на полу и не на разметке.
-          const half = 26 * sc;
-          const ends = [[x + Math.cos(a) * half, y + Math.sin(a) * half], [x - Math.cos(a) * half, y - Math.sin(a) * half]];
-          if (!ends.every(([ex, ey]) => free(ex, ey, false))) continue;
+          // Балка лежит наискось: вдоль стены она смотрелась бы аккуратно уложенной.
+          const off = ((a % (Math.PI / 2)) + Math.PI / 2) % (Math.PI / 2);
+          if (off < PROPS.BEAM_TILT) a += PROPS.BEAM_TILT - off;
+          else if (off > Math.PI / 2 - PROPS.BEAM_TILT) a -= off - (Math.PI / 2 - PROPS.BEAM_TILT);
+          // Пол должен быть свободен не только под центром, но и по всей длине.
+          const half = PROPS.BEAM_HALF * sc;
+          const clear = [-1, -0.5, 0.5, 1].every(f =>
+            free(x + Math.cos(a) * half * f, y + Math.sin(a) * half * f, false));
+          if (!clear) continue;
         }
         props.push({ kind, x, y, a, s: sc, seed: rnd(), zone: z.kind, wear });
         placed++;
@@ -3356,14 +3512,22 @@ const PROP_DRAW = {
   tire(c) { drawTire(c); },
 
   beam(c, rnd) {
-    // Обрушенный двутавр: тень, стенка, две полки, ржавчина и дыры под болты.
+    // Обрушенный двутавр: тень, стенка, две полки, ржавчина, дыры под болты
+    // и обломки бетона у оторванных концов.
+    const h = PROPS.BEAM_HALF;
     c.fillStyle = 'rgba(0,0,0,.25)';
-    c.fillRect(-25, -3, 52, 9);
-    c.save(); c.rotate((rnd() - 0.5) * 0.04);
-    drawIBeam(c, -26, 26, 9, rnd);
+    c.fillRect(-h + 1, -3.5, h * 2, 11);
+    c.save(); c.rotate((rnd() - 0.5) * 0.03);
+    drawIBeam(c, -h, h, 11, rnd);
     c.restore();
     c.fillStyle = 'rgba(0,0,0,.55)';
-    c.beginPath(); c.arc(-22, 0, 1.3, 0, TAU); c.arc(22, 0, 1.3, 0, TAU); c.fill();
+    c.beginPath();
+    for (const x of [-h + 4, -h * 0.3, h * 0.35, h - 4]) c.arc(x, 0, 1.4, 0, TAU);
+    c.fill();
+    c.fillStyle = '#8d9096';
+    for (const side of [-1, 1]) {
+      roughBlob(c, rnd, side * (h + 3), (rnd() - 0.5) * 6, 2.5 + rnd() * 2.5, 5, 0.6); c.fill();
+    }
   },
 
   tires(c, rnd) {
@@ -3595,8 +3759,6 @@ const DECAY = {
   SUN_SKEW: 0.3,          // все лучи скошены в одну сторону — будто от одного солнца
   RAYS: 9,                // лучей на контур пятна света
   MOTES: 7,               // пылинок в луче
-  BEAM_ALPHA: 0.5,        // балки под потолком полупрозрачные
-  BEAM_W: 14,             // ширина балки перекрытия, px
 };
 
 function mapDecay() {
@@ -3609,7 +3771,7 @@ function buildDecay() {
   const rnd = mulberry32(hashStr(`decay:${MAP_NAME}:${MAP_W}x${MAP_H}`));
   const marked = markedTiles();
   const DIRS = [[0, 1], [0, -1], [1, 0], [-1, 0]];
-  const openings = [], ceiling = [], litter = [];
+  const openings = [], litter = [];
 
   for (const z of propZones()) {
     // Окно — в наружной стене: за ней край карты или сплошной массив, по бокам
@@ -3661,45 +3823,8 @@ function buildDecay() {
     for (let i = 0; i < windows; i++) place('window');
     const breaches = (rnd() < DECAY.BREACH ? 1 : 0) + Math.floor(floor / 400);
     for (let i = 0; i < breaches; i++) place('breach');
-
-    // Балки перекрытия: от стены до стены по самому длинному пролёту на линии.
-    // Высокие секции «Комбината» перекрыты поперёк, квадратные комнаты — как придётся.
-    // Двор под открытым небом — над ним перекрытия нет.
-    if (z.kind === 'yard') continue;
-    const horizontal = z.y1 - z.y0 > z.x1 - z.x0 ? true : rnd() < 0.5;
-    const span = horizontal ? z.y1 - z.y0 + 1 : z.x1 - z.x0 + 1;
-    const count = clamp(Math.round(span / 7), 1, 3);
-    const lo = horizontal ? z.x0 : z.y0, hi = horizontal ? z.x1 : z.y1;
-    /** Самый длинный пролёт на линии, который с обеих сторон упирается в стену —
-     *  не в дверной проём на краю помещения. */
-    const spanOn = line => {
-      const at = k => (horizontal ? cell(k, line) : cell(line, k));
-      let best = null, run = null;
-      for (let k = lo; k <= hi + 1; k++) {
-        if (k <= hi && at(k) !== WALL) { if (run) run.b = k; else run = { a: k, b: k }; continue; }
-        if (run && at(run.a - 1) === WALL && at(run.b + 1) === WALL &&
-            (!best || run.b - run.a > best.b - best.a)) best = run;
-        run = null;
-      }
-      return best && best.b - best.a + 1 >= 5 ? best : null;
-    };
-    for (let i = 0; i < count; i++) {
-      const mid = Math.round((horizontal ? z.y0 : z.x0) + (i + 1) * span / (count + 1) - 0.5);
-      let line = mid, best = null;
-      for (const shift of [0, -1, 1, -2, 2]) {
-        best = spanOn(mid + shift);
-        if (best) { line = mid + shift; break; }
-      }
-      if (!best) continue;
-      const a = (best.a - 0.4) * T, b = (best.b + 1.4) * T, m = (line + 0.5) * T;
-      ceiling.push({
-        ...(horizontal ? { x1: a, y1: m, x2: b, y2: m } : { x1: m, y1: a, x2: m, y2: b }),
-        broken: rnd() < 0.3 ? 0.25 + rnd() * 0.5 : 0,     // где провалился кусок, доля длины
-        seed: rnd(),
-      });
-    }
   }
-  return { openings, ceiling, litter };
+  return { openings, litter };
 }
 
 /** Пятно света от окна: веер лучей, каждый обрезан первой преградой. */
@@ -3773,7 +3898,7 @@ function drawOpening(c, o) {
 
 /** Пятна света, осколки и тени балок — в статический слой карты. */
 function drawDecayOnFloor(c) {
-  const { openings, ceiling, litter } = mapDecay();
+  const { openings, litter } = mapDecay();
   c.save();
   c.globalCompositeOperation = 'lighter';
   for (const o of openings) {
@@ -3795,40 +3920,6 @@ function drawDecayOnFloor(c) {
     roughBlob(c, rnd, l.x, l.y, l.r, 4, 0.8); c.fill();
   }
 
-  // Балка под потолком отбрасывает тень на пол — так видно, что она высоко.
-  c.fillStyle = 'rgba(0,0,0,.13)';
-  for (const b of ceiling) {
-    const dx = 7, dy = 9, w = DECAY.BEAM_W;
-    if (b.y1 === b.y2) c.fillRect(b.x1 + dx, b.y1 - w / 2 + dy, b.x2 - b.x1, w);
-    else c.fillRect(b.x1 - w / 2 + dx, b.y1 + dy, w, b.y2 - b.y1);
-  }
-}
-
-/** Балки перекрытия одним слоем: они неподвижны, рисовать каждый кадр незачем. */
-function buildCeilingLayer() {
-  ceilingLayer = document.createElement('canvas');
-  ceilingLayer.width = WORLD_W;
-  ceilingLayer.height = WORLD_H;
-  const c = ceilingLayer.getContext('2d');
-  for (const b of mapDecay().ceiling) {
-    const rnd = mulberry32(Math.floor(b.seed * 4294967295));
-    const len = Math.hypot(b.x2 - b.x1, b.y2 - b.y1);
-    c.save();
-    c.translate(b.x1, b.y1);
-    c.rotate(Math.atan2(b.y2 - b.y1, b.x2 - b.x1));
-    const gap = b.broken ? len * b.broken : -1;
-    const parts = b.broken ? [[0, gap - 9], [gap + 15, len]] : [[0, len]];
-    for (const [s0, e0] of parts) drawIBeam(c, s0, e0, DECAY.BEAM_W, rnd);
-    c.restore();
-  }
-}
-
-function drawCeilingBeams() {
-  if (!mapDecay().ceiling.length) return;
-  if (!ceilingLayer) buildCeilingLayer();
-  ctx.globalAlpha = DECAY.BEAM_ALPHA;
-  ctx.drawImage(ceilingLayer, 0, 0);
-  ctx.globalAlpha = 1;
 }
 
 /** Пылинки медленно плывут в лучах. Рисуются только лучи в кадре. */
@@ -4733,7 +4824,6 @@ function render() {
   drawParticles();
   drawProjectilesAndFx();
   drawDustMotes();
-  drawCeilingBeams();
   ctx.restore();
 
   drawFog(offX, offY);
