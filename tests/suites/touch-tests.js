@@ -58,3 +58,63 @@ hostages.forEach(h => { h.alive = false; h.rescued = true; });
   say(!moveAxis().walk, 'полное отклонение — бег');
   up(1);
 }
+
+// ── Правый стик целится ───────────────────────────────────────────────────
+{
+  input.sticks.move = input.sticks.aim = null;
+  down(2, view.w - 120, 300);
+  move(2, view.w - 120 + 58, 300);          // полный ход вправо
+  updateWorld(DT);
+  say(Math.abs(angDiff(player.ang, 0)) < 0.05,
+      `игрок смотрит вправо: ${player.ang.toFixed(2)} рад`);
+  const m = { x: mouse.x, y: mouse.y };
+  say(m.x > view.w / 2 + 100, 'синтетический курсор ушёл вправо от центра');
+  move(2, view.w - 120, 300 - 58);          // полный ход вверх
+  updateWorld(DT);
+  say(Math.abs(angDiff(player.ang, -Math.PI / 2)) < 0.05, 'прицел следует за стиком');
+  up(2);
+}
+
+// ── Автоогонь ─────────────────────────────────────────────────────────────
+{
+  player.cooldown = 0;
+  giveWeapon(player, 'usp');
+  player.active = 'pistol';
+  down(2, view.w - 120, 300);
+  move(2, view.w - 120 + 20, 300);          // 0.34 хода — меньше порога огня
+  updateWorld(DT);
+  say(!mouse.down && !input.firing, 'в мёртвой зоне и на малом отклонении огня нет');
+  move(2, view.w - 120 + 50, 300);          // 0.86 хода — выше порога
+  updateWorld(DT);
+  say(mouse.down && input.firing, 'отклонение за порог открывает огонь');
+  up(2);
+  updateWorld(DT);
+  say(!mouse.down, 'палец убрали — огонь прекратился');
+}
+
+// ── Доводчик прицела ──────────────────────────────────────────────────────
+{
+  const lane = (() => {
+    for (let ty = 2; ty < MAP_H - 2; ty++)
+      for (let tx = 2; tx < MAP_W - 14; tx++) {
+        let ok = true;
+        for (let i = 0; i < 12 && ok; i++)
+          for (let j = -1; j <= 1; j++) if (!walkable(tx + i, ty + j)) ok = false;
+        if (ok) return { x0: (tx + .5) * T, y: (ty + .5) * T };
+      }
+  })();
+  player.x = lane.x0; player.y = lane.y;
+  const foe = bots[0];
+  Object.assign(foe, { alive: true, hp: 100, x: lane.x0 + 5 * T, y: lane.y + 14 });
+  player.ang = 0;
+  const wanted = Math.atan2(foe.y - player.y, foe.x - player.x);
+  const fixed = aimAssist(0);
+  say(Math.abs(angDiff(fixed, wanted)) < Math.abs(angDiff(0, wanted)),
+      'доводчик тянет прицел к видимому врагу в конусе');
+  say(Math.abs(angDiff(fixed, 0)) < 0.12, 'но подтягивает мягко, а не защёлкивает');
+
+  foe.y = lane.y + 400;                      // вне конуса
+  say(aimAssist(0) === 0, 'далеко в стороне доводчик не работает');
+  foe.alive = false;
+  say(aimAssist(0) === 0, 'по мёртвым не доводит');
+}

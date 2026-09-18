@@ -3172,6 +3172,7 @@ const input = {
   mode: 'kbm',                      // 'kbm' или 'touch', переключается по событиям
   moveX: 0, moveY: 0, walk: false,
   sticks: { move: null, aim: null },
+  firing: false,                    // признак, что правый стик за порогом огня
   pointers: new Map(),              // id → к какому стику или кнопке привязан палец
 };
 const touchMode = () => input.mode === 'touch';
@@ -3228,6 +3229,43 @@ function touchEnd(id) {
   const side = input.pointers.get(id);
   input.pointers.delete(id);
   if (side && input.sticks[side] && input.sticks[side].id === id) input.sticks[side] = null;
+  if (side === 'aim') { input.firing = false; mouse.down = false; }
+}
+
+/** Мягкий доводчик: если в узком конусе есть видимый живой враг, прицел
+ *  смещается к нему на половину разницы. Пальцем по фигуре в 21 пиксель
+ *  иначе не попасть, но выбор цели остаётся за игроком. */
+const AIM_ASSIST = { CONE: 0.12, RANGE: 520, PULL: 0.5 };
+
+function aimAssist(ang) {
+  let best = null, bestOff = AIM_ASSIST.CONE;
+  for (const b of bots) {
+    if (!b.alive) continue;
+    const d = dist(player.x, player.y, b.x, b.y);
+    if (d > AIM_ASSIST.RANGE) continue;
+    if (!playerSees(b.x, b.y)) continue;
+    const to = Math.atan2(b.y - player.y, b.x - player.x);
+    const off = Math.abs(angDiff(to, ang));
+    if (off < bestOff) { bestOff = off; best = to; }
+  }
+  return best === null ? ang : ang + angDiff(best, ang) * AIM_ASSIST.PULL;
+}
+
+/** Правый стик: ставит курсор и решает, идёт ли огонь. Вызывается раз в кадр
+ *  до обновления игрока — дальше работает обычный код прицела и стрельбы. */
+function applyAimStick() {
+  if (!touchMode()) return;
+  const v = stickVector(input.sticks.aim);
+  if (!v.len) {
+    input.firing = false;
+    if (!input.sticks.aim) mouse.down = false;
+    return;
+  }
+  const ang = aimAssist(Math.atan2(v.y, v.x));
+  mouse.x = view.w / 2 + Math.cos(ang) * STICK.CURSOR;
+  mouse.y = view.h / 2 + Math.sin(ang) * STICK.CURSOR;
+  input.firing = v.len >= STICK.FIRE;
+  mouse.down = input.firing;
 }
 
 const pointerXY = e => {
@@ -3451,6 +3489,7 @@ function updateGait(e, dt) {
 }
 
 function updateWorld(dt) {
+  applyAimStick();
   // Клик по панели отряда — это команда, а не выстрел.
   if (mouse.clicked && squadPanelClick(mouse.x, mouse.y)) {
     mouse.clicked = false;
