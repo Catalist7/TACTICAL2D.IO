@@ -116,6 +116,18 @@
     display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));gap:10px;
     align-content:start}
   .wide-cat{max-height:66vh;grid-template-columns:repeat(auto-fit,minmax(280px,1fr))}
+  .options{padding:16px 22px;display:flex;flex-direction:column;gap:12px;max-height:62vh;overflow:auto}
+  .opt{border:1px solid var(--line);border-radius:11px;padding:13px 15px;background:#0c121b}
+  .opt-name{font-weight:700;font-size:14px;color:var(--ink)}
+  .opt-desc{font-size:12px;color:var(--dim);margin-top:4px;line-height:1.45}
+  .opt-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:11px}
+  .opt-btn{flex:1 1 180px;text-align:left;padding:9px 12px;border-radius:9px;cursor:pointer;
+    border:1px solid var(--line);background:#0a0f17;color:var(--dim);font:inherit}
+  .opt-btn b{display:block;font-size:13px;color:var(--ink)}
+  .opt-btn span{font-size:11px}
+  .opt-btn:hover{border-color:#2a3a52}
+  .opt-btn.on{border-color:var(--accent);background:rgba(84,168,255,.12)}
+  .opt-btn.on b{color:var(--accent)}
   .cc-rank{font-size:11px;color:var(--dim);font-weight:600}
   .cc-gear{font-size:11px;color:var(--dim);margin-top:2px}
   .arsenal-tabs{display:flex;flex-wrap:wrap;gap:6px;padding:12px 22px;border-bottom:1px solid var(--line)}
@@ -204,9 +216,9 @@
         <span class="mb-title">Отряд</span>
         <span class="mb-sub">Напарники и звания</span>
       </button>
-      <button class="menu-btn" id="btnSettings" disabled>
+      <button class="menu-btn" id="btnSettings">
         <span class="mb-title">Настройки</span>
-        <span class="mb-sub">Скоро</span>
+        <span class="mb-sub">Выучка отряда и обзор</span>
       </button>
     </div>
     <p class="tut-hint" id="menuHint" hidden></p>
@@ -282,6 +294,19 @@
       <span>В бою: <kbd>5</kbd>–<kbd>8</kbd> выбрать бойца, <kbd>9</kbd> всех,
         <kbd>F</kbd> приказ по клику, <kbd>G</kbd> вернуть в авто.</span>
     </footer>
+  </div>
+</div>
+
+<div id="settingsScreen" class="overlay screen">
+  <div class="scrim"></div>
+  <div class="panel">
+    <header>
+      <h1>Настройки<small>Меняются в любой момент и сохраняются сами</small></h1>
+      <div class="spacer"></div>
+      <button class="go ghost" id="btnSettingsBack">← В меню</button>
+    </header>
+    <div class="options" id="optionList"></div>
+    <footer><span>На прогресс, деньги и снаряжение настройки не влияют.</span></footer>
   </div>
 </div>
 
@@ -1371,6 +1396,15 @@ const SQUAD = {
   REVIVE_TIME: 3,               // сколько стоит над ним, с
   REVIVE_HP: 0.4,               // с какой долей здоровья поднимает
   SHIELD_ARC: 1.22,             // щит держит сектор ±70°
+  // Сильная выучка: осмотр секторов, память на замеченного врага, углы.
+  SCAN_RAYS: 16,                // на сколько сторон боец «прощупывает» зону
+  SCAN_PERIOD: 0.28,            // как часто пересматривает, куда смотреть
+  SCAN_HOLD: 1.3,               // насколько новая сторона должна быть лучше текущей
+  SCAN_SPREAD: 0.7,             // ближе этого угла сектор считается уже прикрытым
+  SCAN_TURN: 4.6,               // скорость доворота при осмотре, рад/с
+  INTEL_LIFE: 7,                // сколько секунд живёт отметка «здесь был враг»
+  INTEL_REACH: 900,             // дальше этого отметка бойцу не интересна
+  STRONG_REACT: 0.75,           // сильные реагируют быстрее своей таблицы
 };
 
 /** Звания по уровням. Их видно в панели отряда и на экране «Отряд». */
@@ -1525,8 +1559,14 @@ function canSee(ox, oy, facing, fov, range, periph, tx, ty) {
   return rayReach(ox, oy, a, d) >= d - 0.5;
 }
 
+// Обзор союзника — такой же, как у бота: тот же конус и та же дальность.
+const allySees = (a, tx, ty) =>
+  canSee(a.x, a.y, a.ang, CFG.FOV, CFG.VIEW_DIST, CFG.PERIPHERAL, tx, ty);
+
+/** Что видно игроку. С включённым общим обзором — ещё и всё, что видит отряд. */
 const playerSees = (tx, ty) =>
-  canSee(player.x, player.y, player.ang, CFG.FOV, viewRange(), CFG.PERIPHERAL, tx, ty);
+  canSee(player.x, player.y, player.ang, CFG.FOV, viewRange(), CFG.PERIPHERAL, tx, ty) ||
+  (sharedVision() && allies.some(a => a.alive && allySees(a, tx, ty)));
 
 // Обзор бота совпадает с игроком: тот же конус, та же дальность, та же периферия.
 const botSees = (b, tx, ty) =>
@@ -2414,6 +2454,7 @@ class Ally {
       target: null, react: st.react, burst: 3,
       goal: null, path: null, pathIdx: 0, repath: 0,
       healCd: SQUAD.HEAL_CD, reviveT: 0, reviveTarget: null,
+      watch: null, scanT: rand(0, SQUAD.SCAN_PERIOD),   // сектор осмотра у сильной выучки
       kit: allyKit(cls, level),
     });
     giveWeapon(this, st.weapon);
@@ -2517,12 +2558,17 @@ class Ally {
     }
 
     const seen = this.pickTarget();
-    if (seen && !this.target) this.react = this.stats.react;
+    if (seen && !this.target)
+      this.react = this.stats.react * (squadStrong() ? SQUAD.STRONG_REACT : 1);
     this.target = seen;
     this.mode = seen ? 'engage' : this.order ? 'hold' : 'follow';
 
-    if (seen) this.doEngage(dt, seen);
-    else this.doMove(dt);
+    if (seen) { this.watch = null; this.doEngage(dt, seen); }
+    else {
+      this.doMove(dt);
+      // Сильные сами выбирают сектор; средние просто держат направление игрока.
+      if (squadStrong()) this.scan(dt);
+    }
     this.stepAside(dt);
   }
 
@@ -2566,15 +2612,65 @@ class Ally {
     return false;                      // лечение на ходу: строй боец не бросает
   }
 
+  /* ── Сильная выучка ────────────────────────────────────────────────────
+     Цели не видно — боец не пялится в спину игроку, а держит сектор: смотрит
+     в самую открытую сторону, которую ещё никто не прикрывает, а если отряд
+     или игрок недавно видели врага — туда. Выйдя из-за угла, боец находит
+     свежеоткрывшийся простор и разворачивается в него: зона осматривается
+     сразу, а не после первого выстрела. */
+  scan(dt) {
+    this.scanT -= dt;
+    if (this.scanT <= 0) {
+      this.scanT = SQUAD.SCAN_PERIOD;
+      this.watch = this.pickWatchAngle();
+    }
+    if (this.watch === null || this.watch === undefined) return false;
+    this.ang = turnToward(this.ang, this.watch, SQUAD.SCAN_TURN * dt);
+    return true;
+  }
+
+  /** Углы, которые уже держат игрок и остальной отряд. */
+  coveredAngles() {
+    const out = [player.ang];
+    for (const o of allies) {
+      if (o === this || !o.alive) continue;
+      out.push(o.watch !== null && o.watch !== undefined ? o.watch : o.ang);
+    }
+    return out;
+  }
+
+  pickWatchAngle() {
+    const spot = freshIntel(this.x, this.y);
+    if (spot) return Math.atan2(spot.y - this.y, spot.x - this.x);
+
+    let best = null, bestScore = 0, hold = 0;
+    for (let i = 0; i < SQUAD.SCAN_RAYS; i++) {
+      const a = (i / SQUAD.SCAN_RAYS) * TAU;
+      // Чем дальше видно, тем опаснее сторона: оттуда и выйдут.
+      let score = castRay(this.x, this.y, a, CFG.VIEW_DIST);
+      for (const c of this.coveredAngles())
+        if (Math.abs(angDiff(a, c)) < SQUAD.SCAN_SPREAD) score *= 0.35;
+      if (this.watch !== null && this.watch !== undefined &&
+          Math.abs(angDiff(a, this.watch)) < SQUAD.SCAN_SPREAD / 2) hold = Math.max(hold, score);
+      if (score > bestScore) { bestScore = score; best = a; }
+    }
+    // Держимся прежнего сектора, пока новый не станет заметно лучше:
+    // иначе двое бойцов будут бесконечно меняться сторонами.
+    if (hold && bestScore < hold * SQUAD.SCAN_HOLD) return this.watch;
+    return best;
+  }
+
   /** Вне боя: держится своей точки — строя или приказа. */
   doMove(dt) {
     const a = this.anchor();
     const d = dist(this.x, this.y, a.x, a.y);
     const stop = this.order ? 18 : SQUAD.FOLLOW_STOP;
+    // У сильной выучки направление задаёт осмотр секторов, а не путь под ногами.
+    const strong = squadStrong();
     if (d > stop) {
       this.stepTo(a.x, a.y, dt, d > SQUAD.FOLLOW_RUN ? 1.25 : 1);
-      if (this.moveAng !== undefined) this.ang = turnToward(this.ang, this.moveAng, 8 * dt);
-    } else {
+      if (!strong && this.moveAng !== undefined) this.ang = turnToward(this.ang, this.moveAng, 8 * dt);
+    } else if (!strong) {
       // На месте смотрит туда же, куда игрок: отряд держит общий сектор.
       this.ang = turnToward(this.ang, this.order ? this.ang : player.ang, 2.4 * dt);
     }
@@ -2644,6 +2740,38 @@ function reviveAlly(a) {
   Audio2D.ui(true);
 }
 
+/* ── Разведка отряда ──────────────────────────────────────────────────────
+   Один список на всех: кто из врагов и где попался на глаза игроку или
+   любому бойцу. Отметка живёт несколько секунд — по ней сильные напарники
+   держат направление и заранее смотрят туда, откуда враг вот-вот выйдет. */
+let squadIntel = [];
+
+function updateSquadIntel(dt) {
+  for (const s of squadIntel) s.age += dt;
+  squadIntel = squadIntel.filter(s => s.age < SQUAD.INTEL_LIFE && !(s.bot && !s.bot.alive));
+  for (const b of bots) {
+    if (!b.alive) continue;
+    const seen = canSee(player.x, player.y, player.ang, CFG.FOV, viewRange(), CFG.PERIPHERAL, b.x, b.y) ||
+      allies.some(a => a.alive && allySees(a, b.x, b.y));
+    if (!seen) continue;
+    const old = squadIntel.find(s => s.bot === b);
+    if (old) { old.x = b.x; old.y = b.y; old.age = 0; }
+    else squadIntel.push({ bot: b, x: b.x, y: b.y, age: 0 });
+  }
+}
+
+/** Самая свежая и близкая отметка, на которую бойцу стоит смотреть. */
+function freshIntel(x, y) {
+  let best = null, bestScore = Infinity;
+  for (const s of squadIntel) {
+    const d = dist(x, y, s.x, s.y);
+    if (d > SQUAD.INTEL_REACH) continue;
+    const score = s.age * 120 + d;          // свежесть важнее близости
+    if (score < bestScore) { bestScore = score; best = s; }
+  }
+  return best;
+}
+
 /* ── Приказы ──────────────────────────────────────────────────────────────
    Два режима: авто (строй и самостоятельный бой) и точка удержания.
    Выделять бойцов можно клавишами 5–8, всех — 9; F ставит приказ следующим
@@ -2701,6 +2829,8 @@ function squadAuto() {
 
 function updateSquad(dt) {
   squadCmd.fireLock = Math.max(0, squadCmd.fireLock - dt);
+  // Разведкой делятся только сильные: средним она ни к чему, а лучи не бесплатны.
+  if (squadStrong()) updateSquadIntel(dt); else if (squadIntel.length) squadIntel = [];
   for (const a of allies) a.update(dt);
   if (squadCmd.pending && mouse.clicked) {
     const m = mouseWorld();
@@ -2857,6 +2987,7 @@ function spawnSquad() {
   }
   squadCmd.pending = false;
   squadCmd.fireLock = 0;
+  squadIntel = [];
 }
 
 function beginLive() {
@@ -2989,7 +3120,8 @@ window.addEventListener('keydown', e => {
 
   if (k === 'escape') {
     if (exitConfirmOpen()) { closeExitConfirm(); e.preventDefault(); return; }
-    if (!state.running && (arsenalOpen() || squadOpen() || $('levelScreen').classList.contains('show')))
+    if (!state.running && (arsenalOpen() || squadOpen() || settingsOpen() ||
+        $('levelScreen').classList.contains('show')))
       showScreen('menuScreen');
     else togglePause();
     e.preventDefault();
@@ -3175,6 +3307,7 @@ function updateWorld(dt) {
     updateSquad(dt);
     for (const h of hostages) h.update(dt);
   }
+  if (state.phase === PHASE.LIVE) separateEntities();
   updateGait(player, dt);
   for (const b of bots) updateGait(b, dt);
   for (const a of allies) updateGait(a, dt);
@@ -3212,6 +3345,48 @@ function updateWorld(dt) {
   for (const p of popups) p.y -= 22 * dt;
 
   updateCamera(dt);
+}
+
+/* ── Расталкивание ────────────────────────────────────────────────────────
+   Столкновений в движке нет: шаг проверяет только стены. Поэтому двое могли
+   встать в одну точку и слиться в одну фигуру. Здесь они мягко расходятся —
+   каждый на половину перекрытия, вдоль стены скользя тем же moveEntity.
+   Игрока не двигает никто: иначе отряд мог бы толкать его или запереть. */
+function separateEntities() {
+  const movers = [];
+  for (const b of bots) if (b.alive) movers.push(b);
+  for (const a of allies) if (a.alive) movers.push(a);
+  for (const h of hostages) if (h.alive && !h.rescued) movers.push(h);
+
+  for (let i = 0; i < movers.length; i++) {
+    const a = movers[i];
+    for (let j = i + 1; j < movers.length; j++) {
+      const b = movers[j];
+      const need = a.r + b.r;
+      let dx = b.x - a.x, dy = b.y - a.y;
+      let d = Math.hypot(dx, dy);
+      if (d >= need) continue;
+      if (d < 1e-3) {                         // ровно друг в друге — расходятся по кругу
+        const ang = (i * 2.39996 + j) % TAU;
+        dx = Math.cos(ang); dy = Math.sin(ang); d = 1;
+      }
+      const push = (need - d) / 2;
+      const ux = dx / d, uy = dy / d;
+      moveEntity(a, -ux * push, -uy * push);
+      moveEntity(b, ux * push, uy * push);
+    }
+    // От игрока отходит только боец: игрок остаётся хозяином положения.
+    if (!player.alive) continue;
+    const need = a.r + player.r;
+    let dx = a.x - player.x, dy = a.y - player.y;
+    let d = Math.hypot(dx, dy);
+    if (d >= need) continue;
+    if (d < 1e-3) {                           // встал ровно в игрока — выходит вбок
+      const ang = (i * 2.39996) % TAU;
+      dx = Math.cos(ang); dy = Math.sin(ang); d = 1;
+    }
+    moveEntity(a, (dx / d) * (need - d), (dy / d) * (need - d));
+  }
 }
 
 function updateCamera(dt) {
@@ -5023,6 +5198,23 @@ function drawFog(offX, offY) {
     fx.closePath();
     fx.fill();
   }
+
+  // Общий обзор: тень снимают и конусы бойцов. Лучей на них меньше — эти
+  // конусы вспомогательные, и кадр не должен дорожать вчетверо.
+  if (sharedVision()) {
+    fx.fillStyle = '#000';
+    for (const a of allies) {
+      if (!a.alive) continue;
+      for (const poly of [buildVisionPolygon(a.x, a.y, a.ang, CFG.FOV, CFG.VIEW_DIST, 90),
+                          buildVisionPolygon(a.x, a.y, a.ang, TAU, CFG.PERIPHERAL, 24)]) {
+        fx.beginPath();
+        fx.moveTo(poly[0].x, poly[0].y);
+        for (let i = 1; i < poly.length; i++) fx.lineTo(poly[i].x, poly[i].y);
+        fx.closePath();
+        fx.fill();
+      }
+    }
+  }
   cutLightFromFog(fx);
   fx.restore();
   fx.setTransform(1, 0, 0, 1, 0, 0);
@@ -5972,8 +6164,42 @@ const progress = {
   armorOwned: [],                 // купленная броня, id из ARMOR_TYPES
   armorEquipped: null,            // надетая; null — без брони
   squad: [],                      // отряд: [{ cls, level }], до четырёх бойцов
+  settings: { squadSkill: 'medium', sharedVision: 'off' },
   tutorial: 'level1',            // level1 → arsenal → squad → done
 };
+
+/* ── Настройки ───────────────────────────────────────────────────────────
+   Всё, что игрок включает сам. Список задаёт и хранение, и экран: добавил
+   пункт сюда — он появился в настройках и стал сохраняться. */
+const OPTIONS = [
+  { id: 'squadSkill', name: 'Выучка напарников',
+    desc: 'Сильные держат сектора, выходят из-за угла с осмотром зоны, ' +
+          'помнят, где враг попадался на глаза тебе или отряду, и реагируют быстрее.',
+    choices: [
+      { value: 'medium', label: 'Средние', hint: 'идут за тобой и бьют по тому, что видят' },
+      { value: 'strong', label: 'Сильные', hint: 'предугадывают, режут углы, делят сектора' },
+    ] },
+  { id: 'sharedVision', name: 'Общий обзор с отрядом',
+    desc: 'Глаза бойцов становятся твоими: их конусы обзора снимают тень с карты, ' +
+          'и замеченного ими врага видно на экране, даже если сам ты смотришь в другую сторону.',
+    choices: [
+      { value: 'off', label: 'Выключен', hint: 'видишь только тем, что видишь сам' },
+      { value: 'on',  label: 'Включён',  hint: 'видишь всё, что видит отряд' },
+    ] },
+];
+const optionOf = id => OPTIONS.find(o => o.id === id) || null;
+const setting = id => progress.settings[id];
+const squadStrong = () => setting('squadSkill') === 'strong';
+const sharedVision = () => setting('sharedVision') === 'on';
+
+function setOption(id, value) {
+  const opt = optionOf(id);
+  if (!opt || !opt.choices.some(c => c.value === value)) return false;
+  progress.settings[id] = value;
+  saveProgress();
+  Audio2D.ui(true);
+  return true;
+}
 
 /* ── Отряд в прогрессе ───────────────────────────────────────────────────
    Слоты открываются по числу пройденных операций. Роспись отряда всегда
@@ -6085,6 +6311,12 @@ function loadProgress() {
         progress.squad.push({ cls: c.id, level: clamp(Math.round(rec.level) || 1, 1, SQUAD.MAX_LEVEL) });
       }
     }
+    if (data.settings && typeof data.settings === 'object') {
+      // Берём только известные пункты с известными значениями: чужое молча гасим.
+      for (const opt of OPTIONS)
+        if (opt.choices.some(c => c.value === data.settings[opt.id]))
+          progress.settings[opt.id] = data.settings[opt.id];
+    }
     // Стадия обучения. В старых сохранениях её нет: там ПП выдавался даром,
     // поэтому игрок с ПП или со второй пройденной операцией обучение уже прошёл.
     if (['level1', 'arsenal', 'squad', 'done'].includes(data.tutorial)) progress.tutorial = data.tutorial;
@@ -6106,7 +6338,7 @@ const levelUnlocked = i => i <= progress.completed && !tutorialBlocksLevel(i);
 /* ── Экраны ──────────────────────────────────────────────────────────────
    Три полноэкранных состояния поверх канваса. Меню закупки и пауза живут
    отдельно, поэтому переключаем только те, что помечены классом screen. */
-const SCREENS = ['menuScreen', 'levelScreen', 'arsenalScreen', 'squadScreen', 'levelDone'];
+const SCREENS = ['menuScreen', 'levelScreen', 'arsenalScreen', 'squadScreen', 'settingsScreen', 'levelDone'];
 
 function showScreen(id) {
   for (const s of SCREENS) $(s).classList.toggle('show', s === id);
@@ -6630,6 +6862,44 @@ function renderSquad() {
   updateTutorialArrow();
 }
 
+/* ── Экран настроек ──────────────────────────────────────────────────────
+   Строится из списка OPTIONS: пункт, пояснение и кнопки-варианты. Выбор
+   сохраняется сразу, экран перерисовывается. */
+function renderSettings() {
+  const list = $('optionList');
+  list.innerHTML = '';
+  for (const opt of OPTIONS) {
+    const box = node('div', 'opt');
+    box.dataset.option = opt.id;
+    box.appendChild(node('div', 'opt-name', opt.name));
+    box.appendChild(node('div', 'opt-desc', opt.desc));
+    const row = node('div', 'opt-row');
+    box.choiceButtons = {};
+    for (const ch of opt.choices) {
+      const on = setting(opt.id) === ch.value;
+      const b = node('button', 'opt-btn' + (on ? ' on' : ''));
+      b.appendChild(node('b', null, ch.label));
+      b.appendChild(node('span', null, ch.hint));
+      b.dataset.value = ch.value;
+      b.ariaSelected = String(on);
+      b.onclick = () => { if (setOption(opt.id, ch.value)) renderSettings(); };
+      row.appendChild(b);
+      box.choiceButtons[ch.value] = b;
+    }
+    box.appendChild(row);
+    list.appendChild(box);
+  }
+}
+
+function openSettings() {
+  Audio2D.init();
+  Audio2D.resume();
+  renderSettings();
+  showScreen('settingsScreen');
+}
+
+const settingsOpen = () => $('settingsScreen').classList.contains('show');
+
 function openSquad() {
   Audio2D.init();
   Audio2D.resume();
@@ -6850,9 +7120,6 @@ function boot() {
   loadProgress();
   $('gameVersion').textContent = `v${GAME_VERSION}`;
 
-  // Состояние будущих разделов задаём явно в коде, а не только атрибутом
-  // в разметке: так его видно из одного места и можно проверить тестом.
-  $('btnSettings').disabled = true;
 
   $('btnExitMatch').onclick = openExitConfirm;
   $('btnExitStay').onclick = closeExitConfirm;
@@ -6863,6 +7130,8 @@ function boot() {
   $('btnArsenalBack').onclick = () => showScreen('menuScreen');
   $('btnSquad').onclick = openSquad;
   $('btnSquadBack').onclick = () => showScreen('menuScreen');
+  $('btnSettings').onclick = openSettings;
+  $('btnSettingsBack').onclick = () => showScreen('menuScreen');
   $('btnBackMenu').onclick = () => showScreen('menuScreen');
   $('btnDoneMenu').onclick = returnToMenu;
   $('btnNextLevel').onclick = () => startLevel(state.levelIndex + 1);
