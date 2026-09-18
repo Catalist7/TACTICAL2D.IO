@@ -18,7 +18,7 @@ SUITES = {
     'level-tests': 'prelude-dom', 'switch-tests': 'prelude-dom', 'loadout-tests': 'prelude-dom',
     'pen-tests': 'prelude-dom', 'arsenal-tests': 'prelude-dom', 'gen-level-tests': 'prelude-dom',
     'gen-validate': 'prelude-dom', 'tutorial-tests': 'prelude-dom', 'hints-tests': 'prelude-dom',
-    'armor-tests': 'prelude-dom', 'fx-tests': 'prelude-dom', 'bot-tests': 'prelude-dom', 'upgrade-tests': 'prelude-dom', 'props-tests': 'prelude-dom', 'decay-tests': 'prelude-dom', 'squad-tests': 'prelude-dom', 'options-tests': 'prelude-dom', 'admin-tests': 'prelude-dom', 'integration-tests': 'prelude-dom',
+    'armor-tests': 'prelude-dom', 'fx-tests': 'prelude-dom', 'bot-tests': 'prelude-dom', 'upgrade-tests': 'prelude-dom', 'props-tests': 'prelude-dom', 'decay-tests': 'prelude-dom', 'squad-tests': 'prelude-dom', 'options-tests': 'prelude-dom', 'admin-tests': 'prelude-dom', 'touch-tests': 'prelude-dom', 'integration-tests': 'prelude-dom',
     'ai-tests': 'prelude-dom', 'draw-tests': 'prelude-count', 'ttk-tests': 'prelude-count',
 }
 TOOLS = {'frame-fight': 'prelude-svg', 'frame-closeup': 'prelude-svg',

@@ -3138,6 +3138,7 @@ const mouseWorld = () => ({ x: camera.x + mouse.x / zoom(), y: camera.y + mouse.
 const worldToScreen = (wx, wy) => ({ x: (wx - camera.x) * zoom(), y: (wy - camera.y) * zoom() });
 
 canvas.addEventListener('mousemove', e => {
+  setInputMode('kbm');
   const r = canvas.getBoundingClientRect();
   mouse.x = e.clientX - r.left;
   mouse.y = e.clientY - r.top;
@@ -3153,6 +3154,106 @@ window.addEventListener('mouseup', e => {
   if (e.button === 2) mouse.right = false;
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ВВОД С ЭКРАНА — тач не заводит вторую модель управления: он заполняет то же
+   состояние, что мышь и клавиши. Левый стик даёт вектор движения, правый
+   ставит курсор — дальше работает обычный код игрока и камеры.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const STICK = {
+  RADIUS: 58,      // ход стика до упора
+  DEAD: 0.18,      // мёртвая зона: палец дрожит всегда
+  WALK: 0.45,      // слабее — тихий шаг, сильнее — бег
+  FIRE: 0.55,      // порог автоматического огня
+  CURSOR: 240,     // на сколько синтетический курсор отходит от центра экрана
+};
+
+const input = {
+  mode: 'kbm',                      // 'kbm' или 'touch', переключается по событиям
+  moveX: 0, moveY: 0, walk: false,
+  sticks: { move: null, aim: null },
+  pointers: new Map(),              // id → к какому стику или кнопке привязан палец
+};
+const touchMode = () => input.mode === 'touch';
+
+/** Вектор стика в долях хода: длина 0…1, мёртвая зона уже вычтена. */
+function stickVector(s) {
+  if (!s) return { x: 0, y: 0, len: 0 };
+  const dx = s.x - s.x0, dy = s.y - s.y0;
+  const raw = Math.hypot(dx, dy) / STICK.RADIUS;
+  if (raw < STICK.DEAD) return { x: 0, y: 0, len: 0 };
+  const len = Math.min(1, (raw - STICK.DEAD) / (1 - STICK.DEAD));
+  const inv = 1 / (Math.hypot(dx, dy) || 1);
+  return { x: dx * inv, y: dy * inv, len };
+}
+
+/** Куда идёт игрок: клавиши или левый стик. Единственная точка, где сходятся
+ *  оба способа управления. */
+function moveAxis() {
+  if (touchMode()) {
+    const v = stickVector(input.sticks.move);
+    return { x: v.x * v.len, y: v.y * v.len, walk: v.len > 0 && v.len < STICK.WALK };
+  }
+  let x = (held('d', 'в', 'arrowright') ? 1 : 0) - (held('a', 'ф', 'arrowleft') ? 1 : 0);
+  let y = (held('s', 'ы', 'arrowdown') ? 1 : 0) - (held('w', 'ц', 'arrowup') ? 1 : 0);
+  const len = Math.hypot(x, y);
+  if (len > 1) { x /= len; y /= len; }
+  return { x, y, walk: held('shift') };
+}
+
+function setInputMode(mode) {
+  if (input.mode === mode) return;
+  input.mode = mode;
+  if (mode === 'kbm') { input.sticks.move = input.sticks.aim = null; input.pointers.clear(); }
+}
+
+function touchStart(id, x, y) {
+  setInputMode('touch');
+  // Левая половина экрана — движение, правая — прицел. Стик появляется там,
+  // где палец коснулся: фиксированный стик заставляет целиться вслепую.
+  const side = x < view.w / 2 ? 'move' : 'aim';
+  if (input.sticks[side]) return;           // этот стик уже держат
+  input.sticks[side] = { id, x0: x, y0: y, x, y };
+  input.pointers.set(id, side);
+}
+
+function touchMove(id, x, y) {
+  const side = input.pointers.get(id);
+  if (!side) return;
+  const s = input.sticks[side];
+  if (s && s.id === id) { s.x = x; s.y = y; }
+}
+
+function touchEnd(id) {
+  const side = input.pointers.get(id);
+  input.pointers.delete(id);
+  if (side && input.sticks[side] && input.sticks[side].id === id) input.sticks[side] = null;
+}
+
+const pointerXY = e => {
+  const r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+};
+
+canvas.addEventListener('pointerdown', e => {
+  if (e.pointerType === 'mouse') return;
+  e.preventDefault();
+  Audio2D.resume();
+  const p = pointerXY(e);
+  touchStart(e.pointerId, p.x, p.y);
+});
+canvas.addEventListener('pointermove', e => {
+  if (e.pointerType === 'mouse') return;
+  e.preventDefault();
+  const p = pointerXY(e);
+  touchMove(e.pointerId, p.x, p.y);
+});
+for (const type of ['pointerup', 'pointercancel'])
+  canvas.addEventListener(type, e => {
+    if (e.pointerType === 'mouse') return;
+    touchEnd(e.pointerId);
+  });
+
 canvas.addEventListener('wheel', e => { e.preventDefault(); cycleWeapon(e.deltaY > 0 ? 1 : -1); }, { passive: false });
 
 window.addEventListener('keydown', e => {
@@ -3290,11 +3391,11 @@ function updatePlayer(dt) {
   if (isFrozen()) { player.speed = 0; return; }
 
   player.aiming = mouse.right;
-  player.walking = held('shift');
 
-  let dx = (held('d', 'в', 'arrowright') ? 1 : 0) - (held('a', 'ф', 'arrowleft') ? 1 : 0);
-  let dy = (held('s', 'ы', 'arrowdown') ? 1 : 0) - (held('w', 'ц', 'arrowup') ? 1 : 0);
+  const axis = moveAxis();
+  let dx = axis.x, dy = axis.y;
   const len = Math.hypot(dx, dy);
+  player.walking = axis.walk;
   if (len > 0) {
     dx /= len; dy /= len;
     let sp = player.walking ? CFG.PLAYER_WALK : CFG.PLAYER_SPEED;

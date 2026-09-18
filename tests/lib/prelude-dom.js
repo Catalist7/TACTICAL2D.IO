@@ -51,6 +51,12 @@
     addEventListener: noop,
   };
   globalThis.window = globalThis;
+  // Медиазапросы: по умолчанию «не телефон», тест может подменить.
+  globalThis.__coarsePointer = false;
+  globalThis.matchMedia = q => ({
+    matches: /coarse/.test(String(q)) ? globalThis.__coarsePointer : false,
+    media: String(q), addEventListener: noop, removeEventListener: noop,
+  });
   globalThis.innerWidth = 1440; globalThis.innerHeight = 900; globalThis.devicePixelRatio = 1;
   globalThis.addEventListener = (type, fn) => { (listeners.window[type] ||= []).push(fn); };
 
