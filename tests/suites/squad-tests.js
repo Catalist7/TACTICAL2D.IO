@@ -106,9 +106,9 @@ function lane() {
   say(!hireAlly('medic'), 'нанять некуда — отказ');
 
   progress.completed = 2;
-  say(canHire('medic') && squadHirePrice('medic') === 3500, 'второй слот открыт, медик стоит $3 500');
+  say(canHire('medic') && squadHirePrice('medic') === 2600, 'второй слот открыт, медик стоит $2 600');
   const m0 = progress.money;
-  say(hireAlly('medic') && progress.money === m0 - 3500, 'медик нанят за свою цену');
+  say(hireAlly('medic') && progress.money === m0 - 2600, 'медик нанят за свою цену');
   progress.completed = 6;
   say(hireAlly('assault') && !canHire('assault'), 'штурмовиков стало двое — лимит класса выбран');
   say(!hireAlly('medic'), 'второго медика не взять');
@@ -500,8 +500,12 @@ function lane() {
   say(!mine.upgradeButton.disabled, 'денег хватает — кнопка открыта');
 
   const hireMedic = named('hire-medic');
-  say(!!hireMedic && /\$3 500/.test(textOf(hireMedic)) && hireMedic.actionButton.textContent === 'Нанять',
+  say(!!hireMedic && /\$2 600/.test(textOf(hireMedic)) && hireMedic.actionButton.textContent === 'Нанять',
       'медика можно нанять за свою цену');
+  say(allyClass('medic').price < allyClass('assault').price * 1.1 &&
+      allyClass('shield').price < allyClass('assault').price * 1.3,
+      `найм не дороже штурмовика вдвое: медик ${money(allyClass('medic').price)}, ` +
+      `щитоносец ${money(allyClass('shield').price)}`);
   say(named('hire-assault').actionButton.disabled &&
       /Лимит/.test(named('hire-assault').actionButton.textContent) === false ||
       named('hire-assault').actionButton.textContent === 'Нанять',

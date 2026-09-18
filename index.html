@@ -126,6 +126,13 @@
   .opt-btn b{display:block;font-size:13px;color:var(--ink)}
   .opt-btn span{font-size:11px}
   .opt-btn:hover{border-color:#2a3a52}
+  .key-btn{flex:1 1 128px;text-align:center;padding:8px 10px;border-radius:9px;cursor:pointer;
+    border:1px solid var(--line);background:#0a0f17;color:var(--dim);font:inherit}
+  .key-btn b{display:block;font:700 15px ui-monospace,Menlo,monospace;color:var(--ink)}
+  .key-btn span{font-size:10px}
+  .key-btn:hover{border-color:#2a3a52}
+  .key-btn.on{border-color:var(--accent);background:rgba(84,168,255,.14)}
+  .key-btn.on b{color:var(--accent)}
   .opt-btn.on{border-color:var(--accent);background:rgba(84,168,255,.12)}
   .opt-btn.on b{color:var(--accent)}
   .cc-rank{font-size:11px;color:var(--dim);font-weight:600}
@@ -244,9 +251,10 @@
       <div><kbd>Shift</kbd> тихий шаг</div>
       <div><kbd>1 2 3</kbd> оружие</div>
       <div><kbd>E</kbd> заложник / подобрать ствол</div>
-      <div><kbd>5</kbd>–<kbd>9</kbd> выбрать бойца отряда</div>
-      <div><kbd>F</kbd> приказ отряду по клику</div>
-      <div><kbd>G</kbd> отряд в авто</div>
+      <div><kbd id="hintSquadKeys">5 6 7 8</kbd> выбрать бойца (с <kbd>Shift</kbd> — нескольких)</div>
+      <div><kbd id="hintAllKey">9</kbd> выделить весь отряд</div>
+      <div><kbd id="hintOrderKey">F</kbd> приказ отряду по клику</div>
+      <div><kbd id="hintAutoKey">G</kbd> отряд в авто</div>
       <div><kbd>Esc</kbd> пауза</div>
     </div>
     <footer>
@@ -347,8 +355,8 @@
     <header><h1>Пауза<small>Операция приостановлена</small></h1></header>
     <div class="keys">
       <div><kbd>Esc</kbd> продолжить</div>
-      <div><kbd>5</kbd>–<kbd>9</kbd> боец отряда</div>
-      <div><kbd>F</kbd> приказ · <kbd>G</kbd> авто</div>
+      <div><kbd id="hintSquadKeys2">5 6 7 8</kbd> боец отряда</div>
+      <div><kbd id="hintOrderKey2">F</kbd> приказ · <kbd id="hintAutoKey2">G</kbd> авто</div>
       <div><kbd>~</kbd> отладочный обзор</div>
     </div>
     <footer>
@@ -365,7 +373,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    CONFIG — весь баланс собран здесь. Меняй числа, не трогая логику.
    ═══════════════════════════════════════════════════════════════════════════ */
-const GAME_VERSION = '1.1';   // показывается в главном меню; см. CHANGELOG.md
+const GAME_VERSION = '1.2';   // показывается в главном меню; см. CHANGELOG.md
 
 const CFG = {
   TILE: 40,
@@ -1433,7 +1441,7 @@ const ALLY_CLASSES = [
     armor:  ALLY_ARMOR,
     guns:   ['p250', 'mac10', 'ump45', 'mp5', 'galil', 'famas', 'ak', 'm4', 'm4', 'aug'],
     gunLv:  [1, 1, 2, 3, 4, 5, 5, 6, 7, 7] },
-  { id: 'medic', name: 'Медик', short: 'МД', max: 1, price: 3500, accent: '#3ddc97',
+  { id: 'medic', name: 'Медик', short: 'МД', max: 1, price: 2600, accent: '#3ddc97',
     desc: 'Лечит отряд на ходу. С пятого уровня поднимает одного раненого за раунд',
     hp:     [100, 104, 108, 112, 116, 120, 124, 128, 131, 135],
     dmg:    [.60, .62, .64, .66, .68, .70, .72, .74, .76, .78],
@@ -1441,7 +1449,7 @@ const ALLY_CLASSES = [
     guns:   ['p250', 'p250', 'mac10', 'mac10', 'ump45', 'ump45', 'mp5', 'mp5', 'mp5', 'mp5'],
     gunLv:  [1, 2, 2, 3, 3, 4, 4, 5, 6, 7],
     heal:   [14, 16, 18, 20, 22, 24, 26, 28, 30, 32] },
-  { id: 'shield', name: 'Щитоносец', short: 'ЩТ', max: 1, price: 4000, accent: '#ffc857',
+  { id: 'shield', name: 'Щитоносец', short: 'ЩТ', max: 1, price: 3000, accent: '#ffc857',
     desc: 'Идёт первым и держит щит: урон спереди уходит в щит, а не в отряд',
     hp:     [130, 134, 139, 143, 148, 152, 157, 161, 166, 170],
     dmg:    [.55, .57, .59, .61, .63, .66, .68, .70, .72, .75],
@@ -3114,6 +3122,8 @@ canvas.addEventListener('wheel', e => { e.preventDefault(); cycleWeapon(e.deltaY
 
 window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
+  // Настройки ждут клавишу — она не должна попасть в игру.
+  if (keyCapture) { captureSquadKey(k); e.preventDefault(); return; }
   if (keys[k]) return;                 // игнорируем автоповтор
   keys[k] = true;
   Audio2D.resume();
@@ -3134,11 +3144,13 @@ window.addEventListener('keydown', e => {
   if (k === '3') selectSlot('melee');
   if (k === 'r' || k === 'к') startReload(player);
   if (k === 'e' || k === 'у') useAction();
-  // Отряд: 5–8 — выбрать бойца, 9 — всех, F — приказ следующим кликом, G — авто.
-  if ('5678'.includes(k)) selectAlly(Number(k) - 5);
-  if (k === '9') selectAllAllies();
-  if (k === 'f' || k === 'а') beginSquadOrder();
-  if (k === 'g' || k === 'п') squadAuto();
+  // Отряд. Клавиши настраиваются; с Shift выбор не сбрасывается, а копится:
+  // зажал Shift, нажал две клавиши — выбраны оба бойца.
+  for (let i = 0; i < 4; i++)
+    if (keyMatches(squadKey('ally' + (i + 1)), k)) selectAlly(i, !e.shiftKey);
+  if (keyMatches(squadKey('all'), k)) selectAllAllies();
+  if (keyMatches(squadKey('order'), k)) beginSquadOrder();
+  if (keyMatches(squadKey('auto'), k)) squadAuto();
   if (k === '`' || k === 'ё' || k === '~') state.debug = !state.debug;
   if (k === 'm' || k === 'ь') state.sheet = !state.sheet;
   if ([' ', 'tab'].includes(k)) e.preventDefault();
@@ -5072,7 +5084,7 @@ function drawAllies() {
       ctx.fillStyle = a.stats.accent;
       ctx.font = '700 9px ui-monospace, Menlo, monospace';
       ctx.textAlign = 'center';
-      ctx.fillText(String(a.idx + 5), a.x, a.y - a.r - 8);
+      ctx.fillText(keyLabel(squadKey('ally' + (a.idx + 1))), a.x, a.y - a.r - 8);
     }
   }
 }
@@ -5383,7 +5395,9 @@ function drawSquadPanel() {
 
   allies.forEach((a, i) => {
     const ry = y + SQUAD_PANEL.head + i * SQUAD_PANEL.row + SQUAD_PANEL.pad;
-    squadHitAreas.push({ x, y: ry - 4, w, h: SQUAD_PANEL.row, act: () => selectAlly(i) });
+    // С зажатым Shift клик по строке добавляет бойца к выбору, как и клавиша.
+    squadHitAreas.push({ x, y: ry - 4, w, h: SQUAD_PANEL.row,
+                         act: () => selectAlly(i, !held('shift')) });
 
     if (a.selected) {
       ctx.fillStyle = hexAlpha(a.stats.accent, 0.12);
@@ -5402,7 +5416,7 @@ function drawSquadPanel() {
     // своя половина строки, а полоски начинаются заведомо правее.
     ctx.font = '600 9px ui-monospace, Menlo, monospace';
     ctx.fillStyle = a.down ? '#ff5566' : '#e9eef6';
-    ctx.fillText(`${i + 5} · ${a.stats.rank}`, x + 34, ry + 8);
+    ctx.fillText(`${keyLabel(squadKey('ally' + (i + 1)))} · ${a.stats.rank}`, x + 34, ry + 8);
 
     ctx.fillStyle = '#8b98ad';
     ctx.fillText(a.down ? 'ранен' : a.mode === 'revive' ? 'поднимает'
@@ -5422,9 +5436,9 @@ function drawSquadPanel() {
   const by = y + h - SQUAD_PANEL.btn - SQUAD_PANEL.pad + 2;
   const bw = (w - 28) / 3;
   const buttons = [
-    ['ВСЕ · 9', selectAllAllies, allies.some(a => a.selected)],
-    ['ПРИКАЗ · F', beginSquadOrder, squadCmd.pending],
-    ['АВТО · G', squadAuto, allies.every(a => !a.order)],
+    [`ВСЕ · ${keyLabel(squadKey('all'))}`, selectAllAllies, allies.some(a => a.selected)],
+    [`ПРИКАЗ · ${keyLabel(squadKey('order'))}`, beginSquadOrder, squadCmd.pending],
+    [`АВТО · ${keyLabel(squadKey('auto'))}`, squadAuto, allies.every(a => !a.order)],
   ];
   buttons.forEach(([label, act, on], i) => {
     const bx = x + 14 + i * (bw + 3);
@@ -6164,9 +6178,65 @@ const progress = {
   armorOwned: [],                 // купленная броня, id из ARMOR_TYPES
   armorEquipped: null,            // надетая; null — без брони
   squad: [],                      // отряд: [{ cls, level }], до четырёх бойцов
-  settings: { squadSkill: 'medium', sharedVision: 'off' },
+  settings: { squadSkill: 'medium', sharedVision: 'off', squadKeys: null },   // клавиши — ниже
   tutorial: 'level1',            // level1 → arsenal → squad → done
 };
+
+/* ── Клавиши отряда ──────────────────────────────────────────────────────
+   Раскладку игрок задаёт сам. Хранится то, что он нажал; сравнение идёт с
+   поправкой на кириллицу, чтобы «А» в русской раскладке работала как F. */
+const KEY_LAYOUT = {
+  'й':'q','ц':'w','у':'e','к':'r','е':'t','н':'y','г':'u','ш':'i','щ':'o','з':'p',
+  'х':'[','ъ':']','ф':'a','ы':'s','в':'d','а':'f','п':'g','р':'h','о':'j','л':'k',
+  'д':'l','ж':';','э':"'",'я':'z','ч':'x','с':'c','м':'v','и':'b','т':'n','ь':'m',
+  'б':',','ю':'.','ё':'`',
+};
+const latinKey = k => KEY_LAYOUT[k] || k;
+/** Совпадает ли нажатая клавиша с назначенной — в любой раскладке. */
+const keyMatches = (bound, pressed) => !!bound && latinKey(bound) === latinKey(pressed);
+
+const SQUAD_KEYS = [
+  { id: 'ally1', name: 'Первый боец',  def: '5' },
+  { id: 'ally2', name: 'Второй боец',  def: '6' },
+  { id: 'ally3', name: 'Третий боец',  def: '7' },
+  { id: 'ally4', name: 'Четвёртый боец', def: '8' },
+  { id: 'all',   name: 'Выделить всех', def: '9' },
+  { id: 'order', name: 'Приказ по клику', def: 'f' },
+  { id: 'auto',  name: 'Вернуть в авто', def: 'g' },
+];
+const defaultSquadKeys = () => Object.fromEntries(SQUAD_KEYS.map(k => [k.id, k.def]));
+progress.settings.squadKeys = defaultSquadKeys();   // раскладка по умолчанию до загрузки
+// Настройки могли прийти из чужого сохранения без раскладки — не падаем.
+const squadKey = id => (progress.settings.squadKeys || {})[id] || '';
+/** Как клавиша подписана в интерфейсе. */
+const keyLabel = k => (k === ' ' ? 'ПРОБЕЛ' : (k || '—').toUpperCase());
+
+// Занято игрой: движение, слоты оружия, перезарядка, действие, пауза, отладка.
+const RESERVED_KEYS = ['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright',
+  '1', '2', '3', 'r', 'e', 'escape', 'shift', 'tab', ' ', '`', 'm', 'control', 'alt', 'meta'];
+const keyReserved = k => RESERVED_KEYS.some(r => latinKey(r) === latinKey(k));
+
+/** Назначить клавишу. Занятую другим пунктом отряда — меняем местами. */
+function bindSquadKey(id, key) {
+  if (!SQUAD_KEYS.some(k => k.id === id)) return 'нет такого пункта';
+  key = String(key || '').toLowerCase();
+  if (!key || key.length > 1 && !key.startsWith('arrow') && key !== 'escape') {
+    if (key.length > 1) return 'такую клавишу назначить нельзя';
+  }
+  if (keyReserved(key)) return 'клавиша занята управлением';
+  const taken = SQUAD_KEYS.find(k => k.id !== id && keyMatches(squadKey(k.id), key));
+  if (taken) progress.settings.squadKeys[taken.id] = squadKey(id);   // меняются местами
+  progress.settings.squadKeys[id] = key;
+  saveProgress();
+  Audio2D.ui(true);
+  return null;
+}
+
+function resetSquadKeys() {
+  progress.settings.squadKeys = defaultSquadKeys();
+  saveProgress();
+  Audio2D.ui(true);
+}
 
 /* ── Настройки ───────────────────────────────────────────────────────────
    Всё, что игрок включает сам. Список задаёт и хранение, и экран: добавил
@@ -6316,6 +6386,24 @@ function loadProgress() {
       for (const opt of OPTIONS)
         if (opt.choices.some(c => c.value === data.settings[opt.id]))
           progress.settings[opt.id] = data.settings[opt.id];
+      // Раскладка: сначала то, что игрок назначил сам, потом свободные умолчания.
+      // Занятое управлением, повторы и небуквенный мусор отбрасываются молча.
+      const saved = data.settings.squadKeys;
+      if (saved && typeof saved === 'object') {
+        const out = {}, used = new Set();
+        for (const k of SQUAD_KEYS) {
+          const key = String(saved[k.id] || '').toLowerCase();
+          if (!key || key.length > 1 || keyReserved(key) || used.has(latinKey(key))) continue;
+          out[k.id] = key;
+          used.add(latinKey(key));
+        }
+        for (const k of SQUAD_KEYS) {
+          if (out[k.id]) continue;
+          out[k.id] = used.has(latinKey(k.def)) ? '' : k.def;   // занято — пункт без клавиши
+          if (out[k.id]) used.add(latinKey(k.def));
+        }
+        progress.settings.squadKeys = out;
+      }
     }
     // Стадия обучения. В старых сохранениях её нет: там ПП выдавался даром,
     // поэтому игрок с ПП или со второй пройденной операцией обучение уже прошёл.
@@ -6323,7 +6411,9 @@ function loadProgress() {
     else progress.tutorial = owns(LEGACY_FREE_SMG) || progress.completed >= 2 ? 'done'
       : progress.completed >= 1 ? 'arsenal' : 'level1';
     if (progress.tutorial === 'arsenal' && tutorialBought()) progress.tutorial = 'squad';
+    if (!progress.settings.squadKeys) progress.settings.squadKeys = defaultSquadKeys();
   } catch (e) { /* без прогресса, но играть можно */ }
+  if (!progress.settings.squadKeys) progress.settings.squadKeys = defaultSquadKeys();
   applyLoadout();
 }
 
@@ -6865,6 +6955,69 @@ function renderSquad() {
 /* ── Экран настроек ──────────────────────────────────────────────────────
    Строится из списка OPTIONS: пункт, пояснение и кнопки-варианты. Выбор
    сохраняется сразу, экран перерисовывается. */
+let keyCapture = null;      // { id } — ждём нажатие для этого пункта
+let keyNote = '';           // что показать под клавишами после назначения
+
+/** Пришло нажатие, пока настройки ждали клавишу. */
+function captureSquadKey(k) {
+  const id = keyCapture.id;
+  keyCapture = null;
+  if (k === 'escape') keyNote = 'Отменено — клавиша осталась прежней.';
+  else {
+    const err = bindSquadKey(id, k);
+    keyNote = err ? `Не вышло: ${err}.` : `Назначено: ${keyLabel(k)}.`;
+    if (err) Audio2D.ui(false);
+  }
+  if (settingsOpen()) renderSettings();
+  syncKeyHints();
+}
+
+/** Раздел с клавишами отряда: по кнопке на пункт, клик — назначить. */
+function renderKeyOptions(list) {
+  const box = node('div', 'opt');
+  box.dataset.option = 'squadKeys';
+  box.appendChild(node('div', 'opt-name', 'Клавиши отряда'));
+  box.appendChild(node('div', 'opt-desc',
+    'Нажми на пункт и нажми любую свободную клавишу. Зажатый Shift не сбрасывает выбор: ' +
+    'с ним можно нажать клавиши двух бойцов подряд — и приказ получат оба.'));
+  const row = node('div', 'opt-row');
+  box.keyButtons = {};
+  for (const k of SQUAD_KEYS) {
+    const waiting = keyCapture && keyCapture.id === k.id;
+    const b = node('button', 'key-btn' + (waiting ? ' on' : ''));
+    b.appendChild(node('b', null, waiting ? '…' : keyLabel(squadKey(k.id))));
+    b.appendChild(node('span', null, k.name));
+    b.dataset.bind = k.id;
+    b.onclick = () => { keyCapture = { id: k.id }; keyNote = 'Нажми клавишу. Esc — отмена.'; renderSettings(); };
+    row.appendChild(b);
+    box.keyButtons[k.id] = b;
+  }
+  box.appendChild(row);
+
+  const foot = node('div', 'opt-row');
+  const reset = node('button', 'opt-btn');
+  reset.appendChild(node('b', null, 'Сбросить раскладку'));
+  reset.appendChild(node('span', null, 'вернуть 5–8, 9, F и G'));
+  reset.dataset.value = 'reset';
+  reset.onclick = () => { resetSquadKeys(); keyNote = 'Раскладка сброшена.'; renderSettings(); syncKeyHints(); };
+  foot.appendChild(reset);
+  box.appendChild(foot);
+  if (keyNote) box.appendChild(node('div', 'opt-desc', keyNote));
+  box.resetButton = reset;
+  list.appendChild(box);
+}
+
+/** Подсказки по клавишам в списках управления — из текущей раскладки. */
+function syncKeyHints() {
+  const seq = ['ally1', 'ally2', 'ally3', 'ally4'].map(id => keyLabel(squadKey(id))).join(' ');
+  for (const id of ['hintSquadKeys', 'hintSquadKeys2'])
+    if ($(id)) $(id).textContent = seq;
+  for (const [id, bind] of [['hintAllKey', 'all'], ['hintAllKey2', 'all'],
+                            ['hintOrderKey', 'order'], ['hintOrderKey2', 'order'],
+                            ['hintAutoKey', 'auto'], ['hintAutoKey2', 'auto']])
+    if ($(id)) $(id).textContent = keyLabel(squadKey(bind));
+}
+
 function renderSettings() {
   const list = $('optionList');
   list.innerHTML = '';
@@ -6889,11 +7042,14 @@ function renderSettings() {
     box.appendChild(row);
     list.appendChild(box);
   }
+  renderKeyOptions(list);
 }
 
 function openSettings() {
   Audio2D.init();
   Audio2D.resume();
+  keyCapture = null;
+  keyNote = '';
   renderSettings();
   showScreen('settingsScreen');
 }
@@ -7138,6 +7294,7 @@ function boot() {
   $('btnMenuFromPause').onclick = returnToMenu;
   $('resumeBtn').onclick = togglePause;
 
+  syncKeyHints();
   mouse.x = view.w / 2;
   mouse.y = view.h / 2;
   showScreen('menuScreen');

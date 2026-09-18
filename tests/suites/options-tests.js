@@ -80,7 +80,7 @@ function squadOf(list) {
   say(shown('settingsScreen'), 'экран настроек открывается');
 
   const boxes = [...$('optionList').children];
-  say(boxes.length === 2, 'на экране обе настройки');
+  say(boxes.length === 3, 'на экране обе настройки и раскладка клавиш');
   const box = id => boxes.find(b => b.dataset.option === id);
 
   const skill = box('squadSkill');
@@ -109,6 +109,115 @@ function squadOf(list) {
   setOption('squadSkill', 'medium');
   say(progress.money === money0 && progress.owned.length === owned0,
       'переключение настроек не трогает кошелёк и арсенал');
+}
+
+// ── Клавиши отряда ────────────────────────────────────────────────────────
+{
+  resetSquadKeys();
+  say(SQUAD_KEYS.length === 7, 'настраиваются семь клавиш: четыре бойца, все, приказ, авто');
+  say(SQUAD_KEYS.map(k => k.def).join(' ') === '5 6 7 8 9 f g', 'раскладка по умолчанию 5–8, 9, F, G');
+  say(keyMatches(squadKey('order'), 'а'), 'русская «А» работает как F — раскладку клавиатуры учитываем');
+  say(keyLabel(squadKey('ally1')) === '5' && keyLabel('') === '—', 'клавиша подписывается, пустая — прочерком');
+
+  say(bindSquadKey('ally1', 'z') === null && squadKey('ally1') === 'z', 'клавишу бойца можно переназначить');
+  say(bindSquadKey('ally2', 'w') !== null && squadKey('ally2') === '6',
+      'занятую управлением клавишу не назначить');
+  say(bindSquadKey('ally2', 'r') !== null, 'перезарядку тоже не отдадим');
+  say(bindSquadKey('нетакой', 'z') !== null, 'неизвестный пункт отклоняется');
+
+  // Занятая своим же пунктом клавиша меняется местами.
+  bindSquadKey('ally2', 'z');
+  say(squadKey('ally2') === 'z' && squadKey('ally1') === '6',
+      'клавиша, занятая другим бойцом, меняется местами, а не дублируется');
+  say(new Set(SQUAD_KEYS.map(k => squadKey(k.id))).size === SQUAD_KEYS.length,
+      'двух пунктов на одной клавише не бывает');
+
+  // Хранение и мусор.
+  saveProgress();
+  progress.settings.squadKeys = null;
+  loadProgress();
+  say(squadKey('ally2') === 'z', 'раскладка переживает перезагрузку');
+
+  localStorage.setItem(PROGRESS_KEY, JSON.stringify({ completed: 3, settings: { squadKeys: {
+    ally1: 'w', ally2: 'z', ally3: 'z', ally4: 'щщщ', all: 5, order: '', auto: 'x' } } }));
+  loadProgress();
+  const keys = SQUAD_KEYS.map(k => squadKey(k.id));
+  say(squadKey('ally1') !== 'w', 'из сохранения занятая управлением клавиша не проходит');
+  say(squadKey('ally2') === 'z' && squadKey('ally3') !== 'z', 'повтор в сохранении достаётся первому');
+  say(squadKey('auto') === 'x', 'годное значение из сохранения принято');
+  say(new Set(keys.filter(Boolean)).size === keys.filter(Boolean).length,
+      'после загрузки раскладка снова без повторов');
+  say(!keyReserved('z') && keyReserved('ц'), 'занятость клавиши проверяется с учётом раскладки');
+
+  // Экран: кнопка ждёт нажатие, Esc отменяет.
+  resetSquadKeys();
+  openSettings();
+  const keyBox = () => [...$('optionList').children].find(b2 => b2.dataset.option === 'squadKeys');
+  say(!!keyBox() && Object.keys(keyBox().keyButtons).length === 7, 'на экране все семь клавиш');
+  keyBox().keyButtons.ally1.onclick();
+  say(keyCapture && keyCapture.id === 'ally1', 'кнопка ждёт нажатия');
+  captureSquadKey('escape');
+  say(!keyCapture && squadKey('ally1') === '5', 'Esc отменяет назначение');
+  keyBox().keyButtons.ally1.onclick();
+  captureSquadKey('z');
+  say(!keyCapture && squadKey('ally1') === 'z', 'нажатая клавиша назначилась');
+  keyBox().resetButton.onclick();
+  say(squadKey('ally1') === '5' && squadKey('order') === 'f', 'кнопка сброса возвращает раскладку');
+  showScreen('menuScreen');
+
+  // Подсказки и панель подписаны текущими клавишами.
+  bindSquadKey('ally1', 'z');
+  syncKeyHints();
+  say($('hintSquadKeys').textContent.startsWith('Z'), 'подсказка в списке управления обновилась');
+  bindSquadKey('order', 'x');
+  syncKeyHints();
+  say($('hintOrderKey').textContent === 'X', 'и подпись приказа тоже');
+  resetSquadKeys();
+  syncKeyHints();
+}
+
+// ── Shift выбирает нескольких ─────────────────────────────────────────────
+{
+  resetSquadKeys();
+  progress.completed = 8;            // загрузки выше меняли прогресс: возвращаем все слоты
+  const squad = squadOf([['assault', 1], ['medic', 1], ['shield', 1], ['assault', 1]]);
+  const press = (key, shift = false) => {
+    for (let i = 0; i < 4; i++) if (keyMatches(squadKey('ally' + (i + 1)), key)) selectAlly(i, !shift);
+  };
+
+  press('5');
+  say(squad[0].selected && squadSelected().length === 1, 'клавиша первого бойца выделяет его одного');
+  press('6');
+  say(squad[1].selected && !squad[0].selected, 'без Shift выбор переходит ко второму');
+
+  press('5', true);
+  press('7', true);
+  say(squad[1].selected && squad[0].selected && squad[2].selected && squadSelected().length === 3,
+      'с Shift выбор копится: нажали две клавиши — выбраны все трое');
+
+  press('7', true);
+  say(!squad[2].selected && squadSelected().length === 2, 'повторное нажатие с Shift снимает бойца');
+
+  press('8');
+  say(squadSelected().length === 1 && squad[3].selected, 'без Shift выбор снова одиночный');
+
+  // Приказ достаётся всем выделенным.
+  press('5', true);
+  const chosen = squadSelected();
+  say(chosen.length === 2, 'двое выделены');
+  placeSquadOrder(player.x + 60, player.y);
+  say(chosen.every(a => !!a.order), 'приказ получили оба выделенных бойца');
+  say(squad.filter(a => a.order).length === 2, 'а остальные остались в авто');
+  squadAuto();
+
+  // Переназначенная клавиша работает, старая — нет.
+  bindSquadKey('ally1', 'z');
+  press('z');
+  say(squad[0].selected, 'новая клавиша выбирает бойца');
+  squad.forEach(a => { a.selected = false; });
+  press('5');
+  say(!squad[0].selected, 'старая больше не работает');
+  resetSquadKeys();
 }
 
 // ── Никто не стоит внутри другого ─────────────────────────────────────────
