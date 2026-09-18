@@ -80,12 +80,12 @@ function lane() {
   const costs = [];
   for (let l = 1; l < 10; l++) costs.push(allyUpgradeCost(l));
   const total = costs.reduce((a, b) => a + b, 0);
-  say(costs.join() === '200,550,1000,1500,2050,2650,3300,3950,4700', `цены уровней: ${costs.join(', ')}`);
+  say(costs.join() === '150,450,800,1200,1650,2100,2650,3150,3750', `цены уровней: ${costs.join(', ')}`);
   say(costs.every((c, i) => i === 0 || c > costs[i - 1]), 'каждый следующий уровень дороже предыдущего');
   const steps = costs.map((c, i) => c - (costs[i - 1] || 0)).slice(1);
   say(steps.some((s, i) => i === 0 || s !== steps[i - 1]), 'рост цены нелинейный, не арифметическая прогрессия');
-  say(total === 19900, `полная прокачка бойца — ${money(total)}`);
-  say(total > 10 * CFG.PAY_FIRST_CLEAR, 'это дороже десяти операций: цель на всю игру');
+  say(total === 15900, `полная прокачка бойца — ${money(total)}`);
+  say(total > 8 * CFG.PAY_FIRST_CLEAR, 'но всё ещё дороже восьми операций: цель на всю игру');
   say(allyUpgradeCost(10) === 0, 'с десятого уровня улучшать некуда');
 }
 

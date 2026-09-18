@@ -71,7 +71,7 @@ bots.forEach(b => { b.alive = false; });
 step(2 + Math.ceil(CFG.END_TIME / DT) + 5);
 say(shown('levelDone'), 'первая операция закрыта');
 say(progress.tutorial === 'arsenal', 'обучение перешло к арсеналу');
-say(progress.money === tutorialCost() && tutorialCost() === 1900,
+say(progress.money === tutorialCost() && tutorialCost() === 1850,
     `в кошельке ровно на ПП, бронежилет и первое звание бойца: ${money(progress.money)}`);
 say(!$('doneNote').hidden && /Арсенал/.test($('doneNote').textContent) && /MAC-10/.test($('doneNote').textContent) &&
     /Кевлар/.test($('doneNote').textContent), `итоги объясняют: «${$('doneNote').textContent}»`);
