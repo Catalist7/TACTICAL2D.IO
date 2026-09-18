@@ -179,25 +179,31 @@ hostages.forEach(h => { h.alive = false; h.rescued = true; });
   foe2.alive = false;
 }
 
-// ── Автоогонь не нажимает панель отряда ───────────────────────────────────
+// ── Тач не трогает mouse.clicked ──────────────────────────────────────────
+// На mouse.clicked держится весь интерфейс: это одиночный щелчок, и его читает
+// панель отряда. Если тач-огонь станет выставлять его каждый кадр, прицел,
+// попавший на панель, начнёт «нажимать» строки бойцов. Поэтому проверяется
+// сам инвариант: сколько бы кадров ни шёл огонь пальцем, флаг не поднимается.
 {
   progress.squad = [{ cls: 'assault', level: 1 }, { cls: 'medic', level: 2 }];
   startLevel(0); beginLive();
   bots.forEach(b => { b.alive = false; });
   hostages.forEach(h => { h.alive = false; h.rescued = true; });
-  render();                                  // панель отряда получила прямоугольники
-  const row = squadHitAreas[0];
-  say(!!row, 'панель отряда на экране');
-
+  giveWeapon(player, 'usp');                 // полуавтомат — тот самый случай
+  player.active = 'pistol';
   input.sticks.move = input.sticks.aim = null;
+  mouse.clicked = false;
+
   down(5, view.w - 120, 300);
   move(5, view.w - 120 + 58, 300);
-  // Прицел искусственно ставим прямо в строку панели — худший случай.
-  updateWorld(DT);
-  mouse.x = row.x + 10; mouse.y = row.y + 10;
-  allies.forEach(a => { a.selected = false; });
-  for (let i = 0; i < 20; i++) updateWorld(DT);
-  say(allies.every(a => !a.selected), 'автоогонь не выделяет бойцов панели');
-  say(squadCmd.fireLock === 0, 'и не блокирует собственный огонь игрока');
+  let shots = 0;
+  for (let i = 0; i < 30; i++) {
+    const before = tracers.length;
+    updateWorld(DT);
+    if (tracers.length > before) shots++;
+  }
+  say(!mouse.clicked, 'за 30 кадров тач-огня mouse.clicked не поднялся ни разу');
+  say(shots > 1, `а полуавтомат при этом стрелял: выстрелов ${shots}`);
+  say(squadCmd.fireLock === 0, 'и собственный огонь ничем не блокировался');
   up(5);
 }
