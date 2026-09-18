@@ -3256,19 +3256,22 @@ function aimAssist(ang) {
 function applyAimStick() {
   if (!touchMode()) return;
   const v = stickVector(input.sticks.aim);
-  if (!v.len) {
-    input.firing = false;
-    if (!input.sticks.aim) mouse.down = false;
-    return;
+  if (v.len) {
+    const ang = aimAssist(Math.atan2(v.y, v.x));
+    // Курсор ставится от бойца, а не от центра экрана: камера смещается за
+    // прицелом и прижимается к краям карты, и от центра угол уезжал бы.
+    const p = worldToScreen(player.x, player.y);
+    mouse.x = p.x + Math.cos(ang) * STICK.CURSOR;
+    mouse.y = p.y + Math.sin(ang) * STICK.CURSOR;
   }
-  const ang = aimAssist(Math.atan2(v.y, v.x));
-  // Курсор ставится от бойца, а не от центра экрана: камера смещается за
-  // прицелом и прижимается к краям карты, и от центра угол уезжал бы.
-  const p = worldToScreen(player.x, player.y);
-  mouse.x = p.x + Math.cos(ang) * STICK.CURSOR;
-  mouse.y = p.y + Math.sin(ang) * STICK.CURSOR;
+  // Ниже порога огня нет, даже если палец остался на экране: иначе автомат
+  // продолжал бы стрелять после возврата стика в мёртвую зону.
   input.firing = v.len >= STICK.FIRE;
   mouse.down = input.firing;
+  // Полуавтоматика читает mouse.clicked, а не mouse.down. На телефоне щёлкать
+  // нечем, поэтому импульс ставится каждый кадр — темп всё равно ограничен
+  // перезарядкой самого ствола, как у быстро щёлкающего мышью игрока.
+  if (input.firing) mouse.clicked = true;
 }
 
 const pointerXY = e => {

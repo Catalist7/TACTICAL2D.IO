@@ -111,10 +111,61 @@ hostages.forEach(h => { h.alive = false; h.rescued = true; });
   const fixed = aimAssist(0);
   say(Math.abs(angDiff(fixed, wanted)) < Math.abs(angDiff(0, wanted)),
       'доводчик тянет прицел к видимому врагу в конусе');
-  say(Math.abs(angDiff(fixed, 0)) < 0.12, 'но подтягивает мягко, а не защёлкивает');
 
   foe.y = lane.y + 400;                      // вне конуса
   say(aimAssist(0) === 0, 'далеко в стороне доводчик не работает');
   foe.alive = false;
   say(aimAssist(0) === 0, 'по мёртвым не доводит');
+}
+
+// ── Огонь не залипает и работает с полуавтоматикой ────────────────────────
+{
+  giveWeapon(player, 'usp');                 // стартовый ствол, auto: false
+  player.active = 'pistol';
+  player.cooldown = 0;
+  input.sticks.move = input.sticks.aim = null;
+  down(4, view.w - 120, 300);
+  move(4, view.w - 120 + 58, 300);
+  updateWorld(DT);
+  say(mouse.clicked, 'на телефоне полуавтоматика получает импульс выстрела');
+  const shots = tracers.length;
+  player.cooldown = 0;
+  updateWorld(DT);
+  say(tracers.length > shots, 'и из стартового пистолета действительно стреляет');
+
+  move(4, view.w - 120 + 4, 300);            // вернули стик в мёртвую зону
+  updateWorld(DT);
+  say(!mouse.down && !input.firing, 'вернул стик в центр, не отпуская экран — огонь прекратился');
+  up(4);
+}
+
+// ── Доводчик тянет ровно наполовину ───────────────────────────────────────
+{
+  const lane2 = (() => {
+    for (let ty = 2; ty < MAP_H - 2; ty++)
+      for (let tx = 2; tx < MAP_W - 14; tx++) {
+        let ok = true;
+        for (let i = 0; i < 12 && ok; i++)
+          for (let j = -1; j <= 1; j++) if (!walkable(tx + i, ty + j)) ok = false;
+        if (ok) return { x0: (tx + .5) * T, y: (ty + .5) * T };
+      }
+  })();
+  player.x = lane2.x0; player.y = lane2.y; player.ang = 0;
+  const foe2 = bots[0];
+  Object.assign(foe2, { alive: true, hp: 100, x: lane2.x0 + 5 * T, y: lane2.y + 14 });
+  const to = Math.atan2(foe2.y - player.y, foe2.x - player.x);
+  const got = aimAssist(0);
+  say(Math.abs(got - angDiff(to, 0) * AIM_ASSIST.PULL) < 1e-9,
+      'доводчик смещает ровно на половину разницы');
+  say(Math.abs(angDiff(got, to)) > 1e-6, 'то есть не защёлкивает цель полностью');
+
+  // Врага за стеной доводчик не видит.
+  let wall = null;
+  for (let ty = 1; ty < MAP_H - 1 && !wall; ty++)
+    for (let tx = 1; tx < MAP_W - 1 && !wall; tx++) if (solid(tx, ty)) wall = tc(tx, ty);
+  Object.assign(foe2, { x: wall.x, y: wall.y });
+  player.ang = Math.atan2(foe2.y - player.y, foe2.x - player.x);
+  const blind = aimAssist(player.ang);
+  say(blind === player.ang, 'цель за стеной доводчик не подтягивает');
+  foe2.alive = false;
 }
