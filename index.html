@@ -3202,6 +3202,12 @@ function moveAxis() {
   return { x, y, walk: held('shift') };
 }
 
+/** Хочет ли игрок стрелять. Мышь различает удержание и щелчок: автоматика
+ *  читает зажатую кнопку, полуавтоматика — одиночное нажатие. Пальцем щёлкать
+ *  нечем, поэтому на телефоне решает отклонение стика, а темп всё равно
+ *  ограничивает перезарядка ствола. */
+const wantsFire = w => (touchMode() ? input.firing : w.auto ? mouse.down : mouse.clicked);
+
 function setInputMode(mode) {
   if (input.mode === mode) return;
   input.mode = mode;
@@ -3268,10 +3274,6 @@ function applyAimStick() {
   // продолжал бы стрелять после возврата стика в мёртвую зону.
   input.firing = v.len >= STICK.FIRE;
   mouse.down = input.firing;
-  // Полуавтоматика читает mouse.clicked, а не mouse.down. На телефоне щёлкать
-  // нечем, поэтому импульс ставится каждый кадр — темп всё равно ограничен
-  // перезарядкой самого ствола, как у быстро щёлкающего мышью игрока.
-  if (input.firing) mouse.clicked = true;
 }
 
 const pointerXY = e => {
@@ -3471,8 +3473,7 @@ function updatePlayer(dt) {
 
   const w = activeWeapon();
   // Клик, которым отдали приказ отряду, стрелять не должен.
-  const wantFire = squadCmd.pending || squadCmd.fireLock > 0 ? false
-    : w.auto ? mouse.down : mouse.clicked;
+  const wantFire = squadCmd.pending || squadCmd.fireLock > 0 ? false : wantsFire(w);
   if (wantFire && player.cooldown <= 0) {
     fireWeapon(player, player.ang, moveSpread);
   }

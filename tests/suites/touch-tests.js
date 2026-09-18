@@ -127,11 +127,11 @@ hostages.forEach(h => { h.alive = false; h.rescued = true; });
   down(4, view.w - 120, 300);
   move(4, view.w - 120 + 58, 300);
   updateWorld(DT);
-  say(mouse.clicked, 'на телефоне полуавтоматика получает импульс выстрела');
+  say(input.firing, 'на телефоне стик за порогом устанавливает флаг огня');
   const shots = tracers.length;
   player.cooldown = 0;
   updateWorld(DT);
-  say(tracers.length > shots, 'и из стартового пистолета действительно стреляет');
+  say(tracers.length > shots, 'полуавтоматика стреляет при удержании стика');
 
   move(4, view.w - 120 + 4, 300);            // вернули стик в мёртвую зону
   updateWorld(DT);
@@ -159,13 +159,45 @@ hostages.forEach(h => { h.alive = false; h.rescued = true; });
       'доводчик смещает ровно на половину разницы');
   say(Math.abs(angDiff(got, to)) > 1e-6, 'то есть не защёлкивает цель полностью');
 
-  // Врага за стеной доводчик не видит.
+  // Врага за стеной доводчик не видит. Ищем стену в пределах дальности.
   let wall = null;
   for (let ty = 1; ty < MAP_H - 1 && !wall; ty++)
-    for (let tx = 1; tx < MAP_W - 1 && !wall; tx++) if (solid(tx, ty)) wall = tc(tx, ty);
-  Object.assign(foe2, { x: wall.x, y: wall.y });
-  player.ang = Math.atan2(foe2.y - player.y, foe2.x - player.x);
-  const blind = aimAssist(player.ang);
-  say(blind === player.ang, 'цель за стеной доводчик не подтягивает');
+    for (let tx = 1; tx < MAP_W - 1 && !wall; tx++) {
+      if (solid(tx, ty)) {
+        const w = tc(tx, ty);
+        if (dist(player.x, player.y, w.x, w.y) <= AIM_ASSIST.RANGE) wall = w;
+      }
+    }
+  if (wall) {
+    Object.assign(foe2, { x: wall.x, y: wall.y });
+    player.ang = Math.atan2(foe2.y - player.y, foe2.x - player.x);
+    const blind = aimAssist(player.ang);
+    say(blind === player.ang, 'цель за стеной доводчик не подтягивает');
+  } else {
+    say(true, 'цель за стеной доводчик не подтягивает (стены в пределах дальности не найдены)');
+  }
   foe2.alive = false;
+}
+
+// ── Автоогонь не нажимает панель отряда ───────────────────────────────────
+{
+  progress.squad = [{ cls: 'assault', level: 1 }, { cls: 'medic', level: 2 }];
+  startLevel(0); beginLive();
+  bots.forEach(b => { b.alive = false; });
+  hostages.forEach(h => { h.alive = false; h.rescued = true; });
+  render();                                  // панель отряда получила прямоугольники
+  const row = squadHitAreas[0];
+  say(!!row, 'панель отряда на экране');
+
+  input.sticks.move = input.sticks.aim = null;
+  down(5, view.w - 120, 300);
+  move(5, view.w - 120 + 58, 300);
+  // Прицел искусственно ставим прямо в строку панели — худший случай.
+  updateWorld(DT);
+  mouse.x = row.x + 10; mouse.y = row.y + 10;
+  allies.forEach(a => { a.selected = false; });
+  for (let i = 0; i < 20; i++) updateWorld(DT);
+  say(allies.every(a => !a.selected), 'автоогонь не выделяет бойцов панели');
+  say(squadCmd.fireLock === 0, 'и не блокирует собственный огонь игрока');
+  up(5);
 }
