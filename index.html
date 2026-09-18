@@ -458,6 +458,8 @@ const CFG = {
   ZOOM: 1.3,                    // желаемый масштаб мира; хитбоксы не меняются
   MIN_VIEW_W: 1040,             // сколько мира обязано остаться видно по ширине
   MIN_VIEW_H: 600,              // и по высоте — иначе зум ослабляется сам
+  MIN_ZOOM_TOUCH: 0.85,         // на телефоне даём отдалиться: иначе видно полкомнаты
+  LEAD_TOUCH: 0.45,             // и камера сильнее уходит за прицелом
   GAIT_CYCLE: 27,               // пикселей пути на один шаг анимации
 
   // Пробитие преград. Бюджет задаётся в «блоках» — это одна клетка карты.
@@ -3128,7 +3130,10 @@ window.addEventListener('resize', resize);
  *  зум ослабляется, чтобы обзор не срезался. Никогда не меньше единицы. */
 function zoom() {
   if (!view.w || !view.h) return 1;
-  return clamp(Math.min(CFG.ZOOM, view.w / CFG.MIN_VIEW_W, view.h / CFG.MIN_VIEW_H), 1, CFG.ZOOM);
+  // На телефоне экран втрое меньше окна, поэтому нижнюю границу опускаем:
+  // лучше мелкие фигуры, чем враг, стреляющий из-за края кадра.
+  const floor = touchMode() ? CFG.MIN_ZOOM_TOUCH : 1;
+  return clamp(Math.min(CFG.ZOOM, view.w / CFG.MIN_VIEW_W, view.h / CFG.MIN_VIEW_H), floor, CFG.ZOOM);
 }
 
 /** Размер видимой части мира с учётом зума. */
@@ -3593,7 +3598,8 @@ function separateEntities() {
 function updateCamera(dt) {
   // Камера смотрит чуть в сторону курсора — видно дальше в ту сторону, куда целишься.
   const { w: vw, h: vh } = viewWorld();
-  const lead = 0.22;
+  // Куда целишься — там видно дальше. На телефоне сильнее: обзор меньше.
+  const lead = touchMode() ? CFG.LEAD_TOUCH : 0.22;
   const tx = player.x + (mouse.x - view.w / 2) / zoom() * lead - vw / 2;
   const ty = player.y + (mouse.y - view.h / 2) / zoom() * lead - vh / 2;
   const k = 1 - Math.pow(0.0006, dt);
@@ -6170,10 +6176,13 @@ function runTests() {
 
   // ── Камера и масштаб ──────────────────────────────────────────────────
   const z = zoom();
-  ok('масштаб в допустимых границах', z >= 1 && z <= CFG.ZOOM, `×${z.toFixed(2)}`);
+  ok('масштаб в допустимых границах', z >= CFG.MIN_ZOOM_TOUCH && z <= CFG.ZOOM, `×${z.toFixed(2)}`);
   const vwld = viewWorld();
-  ok('видимой области хватает по ширине', vwld.w >= CFG.MIN_VIEW_W - 0.5, `${vwld.w.toFixed(0)}px мира`);
-  ok('видимой области хватает по высоте', vwld.h >= CFG.MIN_VIEW_H - 0.5, `${vwld.h.toFixed(0)}px мира`);
+  // На узком экране (телефон) требование другое: там свой масштабный пол.
+  const wantW = Math.min(CFG.MIN_VIEW_W, view.w / CFG.MIN_ZOOM_TOUCH);
+  const wantH = Math.min(CFG.MIN_VIEW_H, view.h / CFG.MIN_ZOOM_TOUCH);
+  ok('видимой области хватает по ширине', vwld.w >= wantW - 0.5, `${vwld.w.toFixed(0)}px мира`);
+  ok('видимой области хватает по высоте', vwld.h >= wantH - 0.5, `${vwld.h.toFixed(0)}px мира`);
 
   {
     // Экран ↔ мир должны быть строго обратимы, иначе прицел уедет от курсора.

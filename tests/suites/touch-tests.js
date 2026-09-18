@@ -207,3 +207,24 @@ hostages.forEach(h => { h.alive = false; h.rescued = true; });
   say(squadCmd.fireLock === 0, 'и собственный огонь ничем не блокировался');
   up(5);
 }
+
+// ── Масштаб и камера на телефоне ──────────────────────────────────────────
+{
+  const w0 = globalThis.innerWidth, h0 = globalThis.innerHeight;
+  globalThis.innerWidth = 844; globalThis.innerHeight = 390;   // айфон в горизонтали
+  resize();
+  down(1, 100, 300);                       // включить тач-режим
+  const z = zoom();
+  const world = viewWorld();
+  say(z >= 0.85 - 1e-6 && z < 1, `масштаб опустился до ${z.toFixed(2)} — как задумано`);
+  say(world.w >= 880 && world.h >= 400,
+      `видно ${Math.round(world.w)}×${Math.round(world.h)} мира`);
+  say(CFG.PLAYER_R * 2 * z >= 18, `боец не мельче 18 px: ${(CFG.PLAYER_R * 2 * z).toFixed(0)}`);
+  up(1);
+
+  for (const fn of __listeners.canvas.mousemove || []) fn({ clientX: 10, clientY: 10 });
+  say(zoom() >= 1, 'на мыши и клавиатуре масштаб прежний, не ниже единицы');
+
+  globalThis.innerWidth = w0; globalThis.innerHeight = h0;
+  resize();
+}
