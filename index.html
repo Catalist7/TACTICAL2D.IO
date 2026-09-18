@@ -3127,7 +3127,8 @@ function resize() {
 window.addEventListener('resize', resize);
 
 /** Действующий масштаб. Желаемый берётся из конфига, но если окно маленькое —
- *  зум ослабляется, чтобы обзор не срезался. Никогда не меньше единицы. */
+ *  зум ослабляется, чтобы обзор не срезался. На мыши и клавиатуре не меньше единицы,
+ *  на телефоне не меньше MIN_ZOOM_TOUCH — там экран втрое меньше и видно полкомнаты. */
 function zoom() {
   if (!view.w || !view.h) return 1;
   // На телефоне экран втрое меньше окна, поэтому нижнюю границу опускаем:
@@ -6176,7 +6177,8 @@ function runTests() {
 
   // ── Камера и масштаб ──────────────────────────────────────────────────
   const z = zoom();
-  ok('масштаб в допустимых границах', z >= CFG.MIN_ZOOM_TOUCH && z <= CFG.ZOOM, `×${z.toFixed(2)}`);
+  const zoomFloor = touchMode() ? CFG.MIN_ZOOM_TOUCH : 1;
+  ok('масштаб в допустимых границах', z >= zoomFloor && z <= CFG.ZOOM, `×${z.toFixed(2)}`);
   const vwld = viewWorld();
   // На узком экране (телефон) требование другое: там свой масштабный пол.
   const wantW = Math.min(CFG.MIN_VIEW_W, view.w / CFG.MIN_ZOOM_TOUCH);
