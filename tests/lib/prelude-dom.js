@@ -21,6 +21,8 @@
       textContent: '', disabled: false, hidden: false, children: [],
       classList: { add: c => cls.add(c), remove: c => cls.delete(c), contains: c => cls.has(c),
         toggle: (c, on) => { (on === undefined ? !cls.has(c) : on) ? cls.add(c) : cls.delete(c); } },
+      value: '', scrollTop: 0, scrollHeight: 0,
+      focus: noop, blur: noop, select: noop,
       getContext: () => new Proxy({}, ctxHandler),
       getBoundingClientRect: () => ({ left: 0, top: 0, width: 1440, height: 900 }),
       addEventListener(type, fn) { if (bucket) (bucket[type] ||= []).push(fn); },

@@ -126,6 +126,20 @@
   .opt-btn b{display:block;font-size:13px;color:var(--ink)}
   .opt-btn span{font-size:11px}
   .opt-btn:hover{border-color:#2a3a52}
+  .admin{position:fixed;left:18px;bottom:18px;width:min(560px,calc(100vw - 36px));z-index:60;
+    background:rgba(6,9,14,.94);border:1px solid #23405f;border-radius:12px;
+    box-shadow:0 18px 50px rgba(0,0,0,.55);font:12px ui-monospace,Menlo,monospace;color:#cfe6ff}
+  .admin-head{display:flex;align-items:center;gap:10px;padding:9px 13px;border-bottom:1px solid #16273a}
+  .admin-head b{color:#54a8ff;font-size:12px;letter-spacing:.04em}
+  .admin-head span{color:#6c7f95;font-size:10px;margin-left:auto}
+  .admin-log{max-height:240px;overflow:auto;padding:9px 13px;display:flex;flex-direction:column;gap:2px}
+  .admin-log div{white-space:pre-wrap;line-height:1.45}
+  .admin-log .cmd{color:#8ad6ff}
+  .admin-log .bad{color:#ff7a8a}
+  .admin-log .ok{color:#7ff0c0}
+  .admin-line{display:flex;align-items:center;gap:8px;padding:9px 13px;border-top:1px solid #16273a}
+  .admin-line span{color:#54a8ff}
+  .admin-line input{flex:1;background:none;border:0;outline:none;color:#e9eef6;font:inherit}
   .key-btn{flex:1 1 128px;text-align:center;padding:8px 10px;border-radius:9px;cursor:pointer;
     border:1px solid var(--line);background:#0a0f17;color:var(--dim);font:inherit}
   .key-btn b{display:block;font:700 15px ui-monospace,Menlo,monospace;color:var(--ink)}
@@ -329,6 +343,18 @@
       <div class="spacer"></div>
       <button class="go ghost" id="btnDoneMenu">В меню</button>
     </footer>
+  </div>
+</div>
+
+<div id="adminPanel" class="admin" hidden>
+  <div class="admin-head">
+    <b>Панель разработчика</b>
+    <span id="adminHint">команды: help · закрыть: Esc</span>
+  </div>
+  <div class="admin-log" id="adminLog"></div>
+  <div class="admin-line">
+    <span>&gt;</span>
+    <input id="adminInput" type="text" autocomplete="off" spellcheck="false" placeholder="help">
   </div>
 </div>
 
@@ -1845,6 +1871,7 @@ const damageScale = attacker => (attacker === player ? 1
 /** Урон с учётом брони и шлема. Возвращает фактически снятое здоровье. */
 function applyDamage(t, dmg, pierce, attacker) {
   if (!t.alive) return 0;
+  if (t === player && admin.god) return 0;      // панель разработчика: бессмертие
   let out = dmg;
   // Щит держит только фронт: удар в спину проходит мимо него целиком.
   if (t.kind === 'ally' && t.shield > 0 && attacker) {
@@ -3110,6 +3137,7 @@ canvas.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('mousedown', e => {
   Audio2D.resume();
+  if (admin.open) return;             // пока открыта консоль, мышь по полю не стреляет
   if (e.button === 0) { mouse.down = true; mouse.clicked = true; }
   if (e.button === 2) mouse.right = true;
 });
@@ -3124,6 +3152,9 @@ window.addEventListener('keydown', e => {
   const k = e.key.toLowerCase();
   // Настройки ждут клавишу — она не должна попасть в игру.
   if (keyCapture) { captureSquadKey(k); e.preventDefault(); return; }
+  // Секретная комбинация и ввод в консоли идут раньше всего остального.
+  if (adminHotkey(e, k)) { toggleAdmin(); e.preventDefault(); return; }
+  if (adminKey(e, k)) { keys[k] = false; return; }
   if (keys[k]) return;                 // игнорируем автоповтор
   keys[k] = true;
   Audio2D.resume();
@@ -3262,7 +3293,11 @@ function updatePlayer(dt) {
     let sp = player.walking ? CFG.PLAYER_WALK : CFG.PLAYER_SPEED;
     sp *= player.armorSpeed;            // тяжёлая броня замедляет и бег, и тихий шаг
     if (player.aiming) sp *= CFG.AIM_SLOW;
-    moveEntity(player, dx * sp * dt, dy * sp * dt);
+    sp *= admin.speed;                  // множитель из панели разработчика, обычно 1
+    if (admin.noclip) {                 // сквозь стены — только для проверки карт
+      player.x = clamp(player.x + dx * sp * dt, player.r, WORLD_W - player.r);
+      player.y = clamp(player.y + dy * sp * dt, player.r, WORLD_H - player.r);
+    } else moveEntity(player, dx * sp * dt, dy * sp * dt);
     player.speed = sp;
 
     // Шаги слышно, если не красться.
@@ -7154,6 +7189,385 @@ function updateTutorial() {
 const currentTutorialHint = () =>
   tutorialRun && tutorialRun.step < TUTORIAL_STEPS.length ? TUTORIAL_STEPS[tutorialRun.step].text : null;
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   ПАНЕЛЬ РАЗРАБОТЧИКА — консоль для проверки игры руками.
+   Открывается секретно: Ctrl+Shift+` или просто набранное слово «admin»
+   (в любой раскладке). На игру не влияет, пока команду не ввели.
+   ═══════════════════════════════════════════════════════════════════════════ */
+const ADMIN_WORD = 'admin';          // набрать подряд, не дольше полутора секунд
+const admin = {
+  open: false, god: false, noclip: false, speed: 1,
+  log: [], typed: '', typedAt: 0, history: [], histIdx: -1, pausedByPanel: false,
+};
+
+const adminSay = (text, kind = '') => {
+  for (const line of String(text).split('\n')) admin.log.push({ text: line, kind });
+  if (admin.log.length > 200) admin.log = admin.log.slice(-200);
+};
+
+/** Разбор числа с поддержкой «+50» и «-50» — прибавить к текущему. */
+function adminNumber(arg, current) {
+  if (arg === undefined) return null;
+  const rel = /^[+-]/.test(arg);
+  const n = Number(arg);
+  if (!Number.isFinite(n)) return null;
+  return rel ? current + n : n;
+}
+
+const ADMIN_COMMANDS = [
+  { name: 'help', args: '', desc: 'список команд',
+    run: () => ADMIN_COMMANDS.map(c => `  ${c.name}${c.args ? ' ' + c.args : ''} — ${c.desc}`).join('\n') },
+
+  { name: 'status', args: '', desc: 'состояние: деньги, операция, отряд, флаги',
+    run: () => [
+      `деньги ${money(progress.money)} · пройдено операций ${progress.completed} · обучение ${progress.tutorial}`,
+      `оружие ${progress.owned.length} шт · броня ${progress.armorOwned.length} шт · надето ${progress.armorEquipped || 'нет'}`,
+      `отряд ${progress.squad.map(a => `${allyClass(a.cls).name} ур.${a.level}`).join(', ') || 'пуст'} (слотов ${squadSlots()})`,
+      `настройки: выучка ${setting('squadSkill')}, общий обзор ${setting('sharedVision')}`,
+      `флаги: бессмертие ${admin.god ? 'вкл' : 'выкл'}, сквозь стены ${admin.noclip ? 'вкл' : 'выкл'}, ` +
+      `скорость ×${admin.speed}, обзор всей карты ${state.debug ? 'вкл' : 'выкл'}`,
+      state.running ? `бой: операция ${state.levelIndex + 1}, раунд ${state.round}, фаза ${state.phase}, ` +
+        `врагов живо ${bots.filter(b => b.alive).length}/${bots.length}` : 'бой не идёт',
+    ].join('\n') },
+
+  { name: 'money', args: '<сумма|+сумма>', desc: 'выдать денег',
+    run: a => {
+      const v = adminNumber(a[0], progress.money);
+      if (v === null) return 'нужно число, например money 50000 или money +1000';
+      progress.money = clamp(Math.round(v), 0, CFG.MAX_MONEY);
+      saveProgress(); refreshAdminScreens();
+      return `денег: ${money(progress.money)}`;
+    } },
+
+  { name: 'unlock', args: '[операций]', desc: 'открыть операции и закрыть обучение',
+    run: a => {
+      progress.completed = clamp(Math.round(Number(a[0] ?? 12)) || 12, 0, 100000);
+      progress.tutorial = 'done';
+      saveProgress(); refreshAdminScreens();
+      return `пройдено операций: ${progress.completed}, обучение закрыто`;
+    } },
+
+  { name: 'give', args: '<ствол|all>', desc: 'выдать оружие и экипировать',
+    run: a => {
+      const id = (a[0] || '').toLowerCase();
+      if (id === 'all') {
+        progress.owned = [...new Set([...progress.owned, ...Object.keys(WEAPONS)])];
+        saveProgress(); refreshAdminScreens();
+        return `выдано стволов: ${progress.owned.length}`;
+      }
+      if (!WEAPONS[id]) return `нет такого ствола. Список: ${Object.keys(WEAPONS).join(' ')}`;
+      if (!owns(id)) progress.owned.push(id);
+      equipWeapon(id);
+      return `${WEAPONS[id].name} выдан и экипирован`;
+    } },
+
+  { name: 'armor', args: '<броня|all|off>', desc: 'выдать и надеть броню',
+    run: a => {
+      const id = (a[0] || '').toLowerCase();
+      if (id === 'off') { equipArmor(null); return 'броня снята'; }
+      if (id === 'all') {
+        progress.armorOwned = ARMOR_TYPES.map(t => t.id);
+        equipArmor(ARMOR_TYPES[ARMOR_TYPES.length - 1].id);
+        return 'вся броня выдана, надета самая тяжёлая';
+      }
+      if (!armorOf(id)) return `нет такой брони. Список: ${ARMOR_TYPES.map(t => t.id).join(' ')} off`;
+      if (!ownsArmor(id)) progress.armorOwned.push(id);
+      equipArmor(id);
+      return `${armorOf(id).name} выдана и надета`;
+    } },
+
+  { name: 'upgrade', args: '<ствол|all> [уровень]', desc: 'уровень прокачки оружия',
+    run: a => {
+      const id = (a[0] || '').toLowerCase();
+      const lv = clamp(Math.round(Number(a[1] ?? UPGRADE.MAX)) || UPGRADE.MAX, 1, UPGRADE.MAX);
+      const ids = id === 'all' ? progress.owned.filter(w => WEAPONS[w].slot !== 'melee') : [id];
+      if (id !== 'all' && !WEAPONS[id]) return 'нет такого ствола';
+      for (const w of ids) {
+        if (!owns(w)) progress.owned.push(w);
+        progress.upgrades[w] = lv;
+      }
+      saveProgress(); refreshAdminScreens();
+      return `уровень ${lv}: ${ids.join(' ')}`;
+    } },
+
+  { name: 'squad', args: '<add|level|clear|slots|max> …', desc: 'отряд: набрать, повысить, очистить',
+    run: a => {
+      const sub = (a[0] || '').toLowerCase();
+      if (sub === 'add') {
+        const cls = (a[1] || 'assault').toLowerCase();
+        if (!allyClass(cls)) return `классы: ${ALLY_CLASSES.map(c => c.id).join(' ')}`;
+        if (progress.squad.length >= SQUAD.MAX) return 'в отряде уже четверо';
+        progress.squad.push({ cls, level: clamp(Math.round(Number(a[2] ?? 1)) || 1, 1, SQUAD.MAX_LEVEL) });
+      } else if (sub === 'level') {
+        const i = Math.round(Number(a[1])) - 1;
+        if (!progress.squad[i]) return 'нет такого бойца: squad level <номер> <уровень>';
+        progress.squad[i].level = clamp(Math.round(Number(a[2])) || 1, 1, SQUAD.MAX_LEVEL);
+      } else if (sub === 'clear') {
+        progress.squad = [];
+      } else if (sub === 'slots') {
+        progress.completed = Math.max(progress.completed,
+          SQUAD.SLOT_AT[clamp(Math.round(Number(a[1])) || SQUAD.MAX, 1, SQUAD.MAX) - 1]);
+      } else if (sub === 'max') {
+        progress.completed = Math.max(progress.completed, SQUAD.SLOT_AT[SQUAD.MAX - 1]);
+        progress.squad = [{ cls: 'assault', level: 10 }, { cls: 'assault', level: 10 },
+                          { cls: 'medic', level: 10 }, { cls: 'shield', level: 10 }];
+      } else return 'squad add <класс> [ур] | level <номер> <ур> | clear | slots <n> | max';
+      saveProgress();
+      if (state.running) spawnSquad();          // чтобы увидеть отряд сразу, не дожидаясь раунда
+      refreshAdminScreens();
+      return `отряд: ${progress.squad.map((x, i) => `${i + 1}. ${allyClass(x.cls).name} ур.${x.level}`).join(', ') || 'пуст'}` +
+        ` (слотов ${squadSlots()})`;
+    } },
+
+  { name: 'set', args: '<настройка> <значение>', desc: 'настройки: squadSkill, sharedVision',
+    run: a => {
+      const id = a[0], value = a[1];
+      if (!optionOf(id)) return `настройки: ${OPTIONS.map(o => `${o.id} (${o.choices.map(c => c.value).join('/')})`).join(', ')}`;
+      if (!setOption(id, value)) return `значения: ${optionOf(id).choices.map(c => c.value).join(' ')}`;
+      if (settingsOpen()) renderSettings();
+      return `${id} = ${value}`;
+    } },
+
+  { name: 'god', args: '[on|off]', desc: 'бессмертие игрока',
+    run: a => {
+      admin.god = a[0] ? a[0] === 'on' : !admin.god;
+      return `бессмертие ${admin.god ? 'включено' : 'выключено'}`;
+    } },
+
+  { name: 'noclip', args: '[on|off]', desc: 'ходить сквозь стены',
+    run: a => {
+      admin.noclip = a[0] ? a[0] === 'on' : !admin.noclip;
+      return `сквозь стены ${admin.noclip ? 'включено' : 'выключено'}`;
+    } },
+
+  { name: 'speed', args: '[множитель]', desc: 'скорость игрока',
+    run: a => {
+      const v = Number(a[0] ?? 1);
+      admin.speed = Number.isFinite(v) ? clamp(v, 0.1, 6) : 1;
+      return `скорость ×${admin.speed}`;
+    } },
+
+  { name: 'reveal', args: '[on|off]', desc: 'видеть всю карту и отладочный обзор',
+    run: a => {
+      state.debug = a[0] ? a[0] === 'on' : !state.debug;
+      return `обзор всей карты ${state.debug ? 'включён' : 'выключен'}`;
+    } },
+
+  { name: 'heal', args: '[сколько]', desc: 'здоровье и броня игрока',
+    run: a => {
+      player.hp = clamp(Number(a[0] ?? CFG.PLAYER_HP) || CFG.PLAYER_HP, 1, CFG.PLAYER_HP);
+      player.armor = player.armorMax;
+      player.alive = true;
+      return `здоровье ${Math.round(player.hp)}, броня ${player.armor}`;
+    } },
+
+  { name: 'ammo', args: '', desc: 'полный боезапас',
+    run: () => {
+      for (const slot of ['pistol', 'rifle']) {
+        const wid = player.slots[slot];
+        if (wid) player.ammo[wid] = { mag: playerWeapon(wid).mag, reserve: playerWeapon(wid).reserve };
+      }
+      player.reloading = 0;
+      return 'патроны пополнены';
+    } },
+
+  { name: 'kill', args: '<bots|self|nearest>', desc: 'убить врагов, себя или ближайшего',
+    run: a => {
+      const what = (a[0] || 'bots').toLowerCase();
+      if (what === 'self') { killEntity(player, bots[0]); return 'игрок убит'; }
+      if (what === 'nearest') {
+        const live = bots.filter(b => b.alive);
+        if (!live.length) return 'живых врагов нет';
+        const t = live.reduce((m, b) => dist(b.x, b.y, player.x, player.y) < dist(m.x, m.y, player.x, player.y) ? b : m);
+        killEntity(t, player);
+        return 'ближайший враг убит';
+      }
+      const n = bots.filter(b => b.alive).length;
+      bots.forEach(b => { if (b.alive) killEntity(b, player); });
+      return `ликвидировано врагов: ${n}`;
+    } },
+
+  { name: 'spawn', args: '[сколько]', desc: 'враг под курсором',
+    run: a => {
+      if (!state.running) return 'сначала зайди в операцию';
+      const n = clamp(Math.round(Number(a[0] ?? 1)) || 1, 1, 8);
+      const m = mouseWorld();
+      let made = 0;
+      for (let i = 0; i < n; i++) {
+        const at = { x: m.x + rand(-30, 30), y: m.y + rand(-30, 30) };
+        if (hitsWall(at.x, at.y, CFG.BOT_R)) continue;
+        const b = new Bot({ at, facing: rand(0, TAU) }, botLoadout(), skillForRound(state.round),
+                          T_KITS[bots.length % T_KITS.length]);
+        bots.push(b);
+        made++;
+      }
+      return made ? `врагов добавлено: ${made}` : 'под курсором стена — некуда ставить';
+    } },
+
+  { name: 'tp', args: '', desc: 'перенестись под курсор',
+    run: () => {
+      if (!state.running) return 'сначала зайди в операцию';
+      const m = mouseWorld();
+      player.x = m.x; player.y = m.y;
+      return `игрок в точке ${Math.round(m.x)}, ${Math.round(m.y)}`;
+    } },
+
+  { name: 'round', args: '<win|lose|restart|time>', desc: 'управление раундом',
+    run: a => {
+      if (!state.running) return 'сначала зайди в операцию';
+      const what = (a[0] || '').toLowerCase();
+      if (what === 'win') { bots.forEach(b => { b.alive = false; }); return 'все враги убраны — раунд выигран'; }
+      if (what === 'lose') { endRound('t', 'команда разработчика'); return 'раунд проигран'; }
+      if (what === 'restart') { startRound(); return 'раунд перезапущен'; }
+      if (what === 'time') {
+        const v = Number(a[1]);
+        if (!Number.isFinite(v)) return 'round time <секунды>';
+        state.timer = v;
+        return `таймер: ${fmtTime(state.timer)}`;
+      }
+      return 'round win | lose | restart | time <секунды>';
+    } },
+
+  { name: 'level', args: '<номер>', desc: 'запустить операцию',
+    run: a => {
+      const i = Math.round(Number(a[0])) - 1;
+      if (!levelAt(i)) return `операции с 1 по ${visibleLevelCount()}`;
+      progress.completed = Math.max(progress.completed, i);
+      progress.tutorial = 'done';
+      startLevel(i);
+      return `операция ${i + 1}: ${levelAt(i).name}`;
+    } },
+
+  { name: 'tutorial', args: '<level1|arsenal|squad|done>', desc: 'стадия обучения',
+    run: a => {
+      const stage = (a[0] || '').toLowerCase();
+      if (!['level1', 'arsenal', 'squad', 'done'].includes(stage)) return 'стадии: level1 arsenal squad done';
+      progress.tutorial = stage;
+      saveProgress(); refreshAdminScreens();
+      return `обучение: ${stage}`;
+    } },
+
+  { name: 'reset', args: 'confirm', desc: 'стереть весь прогресс',
+    run: a => {
+      if ((a[0] || '') !== 'confirm') return 'это сотрёт деньги, оружие и отряд. Напиши: reset confirm';
+      progress.completed = 0; progress.money = 0;
+      progress.owned = [...STARTER];
+      progress.equipped = { melee: 'knife', pistol: 'usp', rifle: null };
+      progress.upgrades = {}; progress.armorOwned = []; progress.armorEquipped = null;
+      progress.squad = []; progress.tutorial = 'level1';
+      applyLoadout(); saveProgress(); refreshAdminScreens();
+      return 'прогресс стёрт — как при первом запуске';
+    } },
+
+  { name: 'clear', args: '', desc: 'очистить консоль',
+    run: () => { admin.log = []; return ''; } },
+
+  { name: 'close', args: '', desc: 'закрыть панель',
+    run: () => { closeAdmin(); return ''; } },
+];
+
+/** Экраны, на которых показанные числа могли устареть после команды. */
+function refreshAdminScreens() {
+  if (arsenalOpen()) renderArsenal();
+  if (squadOpen()) renderSquad();
+}
+
+/** Выполнить строку. Возвращает текст ответа — так её же проверяют тесты. */
+function runAdminCommand(line) {
+  const parts = String(line).trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '';
+  const name = parts[0].toLowerCase();
+  const cmd = ADMIN_COMMANDS.find(c => c.name === name);
+  if (!cmd) {
+    const near = ADMIN_COMMANDS.map(c => c.name).filter(n => n.startsWith(name[0]));
+    return `неизвестная команда «${name}»` + (near.length ? `. Может быть: ${near.join(', ')}` : '. Список: help');
+  }
+  try {
+    return cmd.run(parts.slice(1)) || '';
+  } catch (e) {
+    return 'ошибка выполнения: ' + e.message;
+  }
+}
+
+function submitAdmin(line) {
+  adminSay('> ' + line, 'cmd');
+  if (line.trim()) {
+    admin.history.push(line);
+    admin.histIdx = admin.history.length;
+  }
+  const out = runAdminCommand(line);
+  if (out) adminSay(out, /неизвестн|ошибка|нужно|нет так/.test(out) ? 'bad' : 'ok');
+  renderAdmin();
+  return out;
+}
+
+function renderAdmin() {
+  const box = $('adminLog');
+  box.innerHTML = '';
+  for (const row of admin.log) box.appendChild(node('div', row.kind, row.text));
+  if (box.scrollTo) box.scrollTop = box.scrollHeight;
+}
+
+function openAdmin() {
+  if (admin.open) return;
+  admin.open = true;
+  $('adminPanel').hidden = false;
+  if (state.running && !state.paused) { state.paused = true; admin.pausedByPanel = true; }
+  if (!admin.log.length)
+    adminSay('Панель разработчика. Введи help — покажет все команды. Esc — закрыть.');
+  renderAdmin();
+  const input = $('adminInput');
+  input.value = '';
+  if (input.focus) input.focus();
+}
+
+function closeAdmin() {
+  if (!admin.open) return;
+  admin.open = false;
+  $('adminPanel').hidden = true;
+  if (admin.pausedByPanel) { state.paused = false; admin.pausedByPanel = false; }
+  admin.pausedByPanel = false;
+  const input = $('adminInput');
+  if (input.blur) input.blur();
+}
+
+const toggleAdmin = () => (admin.open ? closeAdmin() : openAdmin());
+
+/** Секретная комбинация: Ctrl+Shift+` либо набранное слово «admin». */
+function adminHotkey(e, k) {
+  if (e.ctrlKey && e.shiftKey && (k === '`' || k === 'ё' || k === '~')) return true;
+  // Пока панель открыта, слово не ловим: иначе оно закрывало бы её прямо из поля ввода.
+  if (admin.open) return false;
+  if (e.ctrlKey || e.altKey || e.metaKey || k.length !== 1) { admin.typed = ''; return false; }
+  const now = performance.now();
+  if (now - admin.typedAt > 1500) admin.typed = '';
+  admin.typedAt = now;
+  admin.typed = (admin.typed + latinKey(k)).slice(-ADMIN_WORD.length);
+  if (admin.typed !== ADMIN_WORD) return false;
+  admin.typed = '';
+  return true;
+}
+
+/** Ввод, пока панель открыта. Возвращает true, если событие съедено. */
+function adminKey(e, k) {
+  if (!admin.open) return false;
+  const input = $('adminInput');
+  if (k === 'escape') { closeAdmin(); return true; }
+  if (k === 'enter') {
+    const line = String(input.value || '');
+    input.value = '';
+    submitAdmin(line);
+    return true;
+  }
+  if (k === 'arrowup' || k === 'arrowdown') {
+    if (!admin.history.length) return true;
+    admin.histIdx = clamp(admin.histIdx + (k === 'arrowup' ? -1 : 1), 0, admin.history.length);
+    input.value = admin.history[admin.histIdx] || '';
+    return true;
+  }
+  return true;                      // всё остальное печатается в поле, в игру не идёт
+}
+
 /* ── Выход из боя ───────────────────────────────────────────────────── */
 const exitConfirmOpen = () => $('exitConfirm').classList.contains('show');
 
@@ -7295,6 +7709,7 @@ function boot() {
   $('resumeBtn').onclick = togglePause;
 
   syncKeyHints();
+  $('adminPanel').hidden = true;
   mouse.x = view.w / 2;
   mouse.y = view.h / 2;
   showScreen('menuScreen');
