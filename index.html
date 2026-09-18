@@ -3262,8 +3262,11 @@ function applyAimStick() {
     return;
   }
   const ang = aimAssist(Math.atan2(v.y, v.x));
-  mouse.x = view.w / 2 + Math.cos(ang) * STICK.CURSOR;
-  mouse.y = view.h / 2 + Math.sin(ang) * STICK.CURSOR;
+  // Курсор ставится от бойца, а не от центра экрана: камера смещается за
+  // прицелом и прижимается к краям карты, и от центра угол уезжал бы.
+  const p = worldToScreen(player.x, player.y);
+  mouse.x = p.x + Math.cos(ang) * STICK.CURSOR;
+  mouse.y = p.y + Math.sin(ang) * STICK.CURSOR;
   input.firing = v.len >= STICK.FIRE;
   mouse.down = input.firing;
 }

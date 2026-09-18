@@ -67,8 +67,8 @@ hostages.forEach(h => { h.alive = false; h.rescued = true; });
   updateWorld(DT);
   say(Math.abs(angDiff(player.ang, 0)) < 0.05,
       `игрок смотрит вправо: ${player.ang.toFixed(2)} рад`);
-  const m = { x: mouse.x, y: mouse.y };
-  say(m.x > view.w / 2 + 100, 'синтетический курсор ушёл вправо от центра');
+  const p = worldToScreen(player.x, player.y);
+  say(mouse.x > p.x + 100, 'синтетический курсор ушёл вправо от бойца');
   move(2, view.w - 120, 300 - 58);          // полный ход вверх
   updateWorld(DT);
   say(Math.abs(angDiff(player.ang, -Math.PI / 2)) < 0.05, 'прицел следует за стиком');
