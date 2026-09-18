@@ -228,3 +228,68 @@ hostages.forEach(h => { h.alive = false; h.rescued = true; });
   globalThis.innerWidth = w0; globalThis.innerHeight = h0;
   resize();
 }
+
+// ── Экранные кнопки ───────────────────────────────────────────────────────
+{
+  globalThis.innerWidth = 844; globalThis.innerHeight = 390;
+  resize();
+  down(1, 100, 300); up(1);                 // включить тач-режим
+  render();
+
+  const btn = id => hudButtons.find(b => b.id === id);
+  say(hudButtons.length > 0, 'в тач-режиме на экране появились кнопки');
+  for (const id of ['reload', 'use', 'aim', 'pause', 'slot0'])
+    say(!!btn(id), `есть кнопка «${id}»`);
+  say(hudButtons.every(b => b.w >= 44 && b.h >= 44), 'все кнопки не мельче 44 точек');
+
+  // Кнопки не должны залезать на миникарту в правом верхнем углу.
+  const mm = minimapRect();
+  const overlaps = (a, b) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  say(hudButtons.every(b => !overlaps(b, mm)), 'ни одна кнопка не перекрывает миникарту');
+
+  // Перезарядка по тапу.
+  const w = activeWeapon();
+  player.ammo[w.id].mag = 1;
+  player.reloading = 0;
+  const r = btn('reload');
+  hudTap(r.x + r.w / 2, r.y + r.h / 2);
+  say(player.reloading > 0, 'тап по кнопке перезаряжает');
+
+  // Смена слота.
+  progress.owned.push('ak'); equipWeapon('ak'); applyLoadout();
+  resetPlayerForRound();
+  const s = btn('slot0');
+  hudTap(s.x + s.w / 2, s.y + s.h / 2);
+  say(player.active === 'rifle', 'тап по слоту меняет оружие');
+
+  // Тап мимо кнопок интерфейс не трогает и уходит в стик.
+  say(!hudTap(view.w / 2, view.h / 2 - 40), 'тап по пустому месту кнопкой не считается');
+
+  // Отряд пальцем: тап выбирает одного, долгое нажатие добавляет второго.
+  progress.squad = [{ cls: 'assault', level: 1 }, { cls: 'medic', level: 3 }];
+  startLevel(0); beginLive();
+  render();
+  const row = i => squadHitAreas[i];
+  hudTap(row(0).x + 20, row(0).y + 10);
+  say(allies[0].selected && squadSelected().length === 1, 'тап по строке выбирает бойца');
+  down(9, row(1).x + 20, row(1).y + 10);
+  longPressTick(0.6);                        // палец держат дольше порога
+  up(9);
+  say(allies[0].selected && allies[1].selected && squadSelected().length === 2,
+      'долгое нажатие добавляет второго бойца, не сбрасывая первого');
+
+  // Короткое касание строки решает по отпусканию: выбирает одного, а не
+  // переключает — иначе оно снимало бы выбор, поставленный hudTap выше.
+  allies.forEach(a => { a.selected = false; });
+  down(10, row(1).x + 20, row(1).y + 10);
+  up(10);
+  say(allies[1].selected && squadSelected().length === 1, 'короткое касание строки выбирает одного бойца');
+
+  say(hudButtons.every(b => b.y + b.h <= view.h && b.x + b.w <= view.w),
+      'кнопки помещаются на экран');
+
+  globalThis.innerWidth = 1440; globalThis.innerHeight = 900; resize();
+  for (const fn of __listeners.canvas.mousemove || []) fn({ clientX: 10, clientY: 10 });
+  render();
+  say(hudButtons.length === 0, 'на мыши экранных кнопок нет');
+}

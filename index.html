@@ -3222,6 +3222,12 @@ function setInputMode(mode) {
 
 function touchStart(id, x, y) {
   setInputMode('touch');
+  // Кнопки срабатывают сразу; строка отряда — по отпусканию пальца.
+  const btn = hudButtonAt(x, y);
+  if (btn) { btn.act(); Audio2D.ui(true); input.pointers.set(id, 'ui'); return; }
+  const row = squadRowAt(x, y);
+  if (row !== null) { pressHold = { id, row, t: 0, done: false }; input.pointers.set(id, 'ui'); return; }
+  if (squadPanelClick(x, y)) { input.pointers.set(id, 'ui'); return; }   // «Все / Приказ / Авто»
   // Левая половина экрана — движение, правая — прицел. Стик появляется там,
   // где палец коснулся: фиксированный стик заставляет целиться вслепую.
   const side = x < view.w / 2 ? 'move' : 'aim';
@@ -3238,10 +3244,40 @@ function touchMove(id, x, y) {
 }
 
 function touchEnd(id) {
+  if (pressHold && pressHold.id === id) {
+    if (!pressHold.done) selectAlly(pressHold.row);   // короткое касание — один боец
+    pressHold = null;
+  }
   const side = input.pointers.get(id);
   input.pointers.delete(id);
   if (side && input.sticks[side] && input.sticks[side].id === id) input.sticks[side] = null;
   if (side === 'aim') { input.firing = false; mouse.down = false; }
+}
+
+/** Долгое нажатие: палец, задержанный на строке отряда, добавляет бойца к
+ *  выделению — на телефоне Shift зажать нечем. Короткое касание выбирает
+ *  одного, поэтому строка решает по отпусканию, а не по касанию. */
+const LONG_PRESS = 0.45;
+let pressHold = null;                  // { id, row, t, done } — палец на строке отряда
+
+/** Номер строки отряда под точкой или null. Строки идут в squadHitAreas первыми. */
+function squadRowAt(x, y) {
+  for (let i = 0; i < allies.length; i++) {
+    const a = squadHitAreas[i];
+    if (a && x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h) return i;
+  }
+  return null;
+}
+
+function longPressTick(dt) {
+  if (!pressHold || pressHold.done) return;
+  pressHold.t += dt;
+  if (pressHold.t < LONG_PRESS) return;
+  const a = allies[pressHold.row];
+  if (a && !a.down) a.selected = true;       // добавить, а не переключить
+  squadCmd.pending = false;
+  pressHold.done = true;
+  Audio2D.ui(true);
 }
 
 /** Мягкий доводчик: если в узком конусе есть видимый живой враг, прицел
@@ -3503,6 +3539,7 @@ function updateGait(e, dt) {
 
 function updateWorld(dt) {
   applyAimStick();
+  longPressTick(dt);
   // Клик по панели отряда — это команда, а не выстрел.
   if (mouse.clicked && squadPanelClick(mouse.x, mouse.y)) {
     mouse.clicked = false;
@@ -5573,6 +5610,75 @@ function squadPanelRect() {
   return { x: 18, y: view.h - 84 - 18 - h, w: SQUAD_PANEL.w, h };
 }
 
+/* ── Экранные кнопки ──────────────────────────────────────────────────────
+   Рисуются на канвасе и ловятся теми же прямоугольниками, что строки панели
+   отряда. На мыши их нет: там те же действия висят на клавишах. */
+let hudButtons = [];
+
+const HUD_BTN = 52;                  // сторона кнопки: палец меньше 44 не берёт
+
+function hudButtonAt(x, y) {
+  for (const b of hudButtons)
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b;
+  return null;
+}
+
+/** Тап по интерфейсу: кнопка или панель отряда. true — событие съедено. */
+function hudTap(x, y) {
+  const b = hudButtonAt(x, y);
+  if (b) { b.act(); Audio2D.ui(true); return true; }
+  return squadPanelClick(x, y);
+}
+
+/** Раскладка кнопок вокруг правого стика и в углах. Порядок важен: по нему
+ *  тесты и рисование ходят одинаково. Пауза стоит в ряд со слотами оружия
+ *  у левого края — правый верхний угол занят миникартой. */
+function layoutHudButtons() {
+  hudButtons = [];
+  if (!touchMode()) return;
+  const s = HUD_BTN, gap = 8;
+  const right = view.w - s - 14, bottom = view.h - s - 14;
+  const add = (id, x, y, label, act) => hudButtons.push({ id, x, y, w: s, h: s, label, act });
+
+  add('reload', right, bottom - (s + gap) * 2, 'R', () => startReload(player));
+  add('use', right - (s + gap), bottom - (s + gap), 'E', () => useAction());
+  add('aim', right - (s + gap) * 2, bottom, 'ПРИЦЕЛ', () => { mouse.right = !mouse.right; });
+  ['rifle', 'pistol', 'melee'].forEach((slot, i) =>
+    add('slot' + i, 14 + (s + gap) * i, 14 + 60, String(i + 1), () => selectSlot(slot)));
+  add('pause', 14 + (s + gap) * 3, 14 + 60, '❚❚', () => togglePause());
+}
+
+function drawTouchControls() {
+  if (!touchMode()) return;
+  // Стики: основание там, где палец коснулся, и головка под пальцем.
+  for (const side of ['move', 'aim']) {
+    const st = input.sticks[side];
+    if (!st) continue;
+    const v = stickVector(st);
+    ctx.globalAlpha = 0.5;
+    ctx.strokeStyle = side === 'move' ? '#54a8ff' : '#ffc857';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(st.x0, st.y0, STICK.RADIUS, 0, TAU); ctx.stroke();
+    ctx.globalAlpha = 0.8;
+    ctx.fillStyle = side === 'move' ? '#54a8ff' : '#ffc857';
+    ctx.beginPath();
+    ctx.arc(st.x0 + v.x * v.len * STICK.RADIUS, st.y0 + v.y * v.len * STICK.RADIUS, 18, 0, TAU);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  for (const b of hudButtons) {
+    ctx.fillStyle = 'rgba(10,14,20,.66)';
+    roundRect(ctx, b.x, b.y, b.w, b.h, 12); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.12)';
+    ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#cfe6ff';
+    ctx.font = '700 11px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 4);
+  }
+  ctx.textAlign = 'left';
+}
+
 function drawSquadPanel() {
   squadHitAreas = [];
   const box = squadPanelRect();
@@ -5702,18 +5808,26 @@ function buildMiniLayer(scale) {
   c.fillRect(RESCUE.x, RESCUE.y, RESCUE.w, RESCUE.h);
 }
 
-function drawMinimap() {
+/** Геометрия миникарты — общий расчёт для отрисовки панели и для проверки,
+ *  что экранные кнопки на неё не залезают. Возвращает прямоугольник панели
+ *  (с отступом) и то, что нужно для отрисовки самой карты внутри него. */
+function minimapRect() {
   const size = 168, pad = 10;
   const scale = Math.min(size / WORLD_W, size / WORLD_H);
   const mw = WORLD_W * scale, mh = WORLD_H * scale;
-  const x = view.w - mw - 18, y = 14;
+  const innerX = view.w - mw - 18, innerY = 14;
+  return { x: innerX - pad, y: innerY - pad, w: mw + pad * 2, h: mh + pad * 2, innerX, innerY, scale };
+}
 
-  hudPanel(x - pad, y - pad, mw + pad * 2, mh + pad * 2);
+function drawMinimap() {
+  const { x, y, w, h: boxH, innerX: mx, innerY: my, scale } = minimapRect();
+
+  hudPanel(x, y, w, boxH);
   if (!miniLayer || miniScale !== scale) buildMiniLayer(scale);
-  ctx.drawImage(miniLayer, x, y);
+  ctx.drawImage(miniLayer, mx, my);
 
   ctx.save();
-  ctx.translate(x, y);
+  ctx.translate(mx, my);
   ctx.scale(scale, scale);
 
   for (const h of hostages) {
@@ -5912,6 +6026,8 @@ function drawHUD() {
   drawWeaponPanel();
   drawHostagePanel();
   drawMinimap();
+  layoutHudButtons();
+  drawTouchControls();
   drawCentreMessage();
   drawTutorialHint();
   if (state.sheet) drawModelSheet();
