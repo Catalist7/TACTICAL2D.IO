@@ -399,7 +399,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    CONFIG — весь баланс собран здесь. Меняй числа, не трогая логику.
    ═══════════════════════════════════════════════════════════════════════════ */
-const GAME_VERSION = '1.4.0';   // показывается в главном меню; см. CHANGELOG.md
+const GAME_VERSION = '1.4.1';   // показывается в главном меню; см. CHANGELOG.md
 
 const CFG = {
   TILE: 40,
@@ -495,6 +495,7 @@ let SECTIONS = [], GATES = [], MAP_MARKS = [], MAP_NAME = '', OUTDOOR_X = 0, ROO
 let OUTDOOR_RECT = null;   // двор прямоугольником — у змейки он может быть где угодно
 let MAP_PROPS = null;      // мусор на полу: считается при первой отрисовке карты
 let MAP_DECAY = null;      // окна, проломы, свет и балки: там же
+let BARREL_SPOTS = null;   // места красных бочек: считаются при первом раунде на карте
 
 const gi = (x, y) => y * MAP_W + x;
 const inBounds = (x, y) => x >= 0 && y >= 0 && x < MAP_W && y < MAP_H;
@@ -680,6 +681,7 @@ function loadMap(id, enemyOverride) {
   mapLayer = miniLayer = null;   // слои перерисуются под новую карту
   MAP_PROPS = null;
   MAP_DECAY = null;
+  BARREL_SPOTS = null;
 
   clearKeyTiles();
 }
@@ -1549,6 +1551,8 @@ let decals = [];
 let particles = [];   // кровь, искры, щепки, гильзы — весь мелкий мусор боя
 let corpses = [];
 let flashes = [];   // вспышки выстрелов для подсветки
+let barrels = [];   // красные бочки раунда: { x, y, r, alive, fuse, by }
+let blasts = [];    // огненные шары взрывов, пока не погасли
 let popups = [];    // всплывающий текст над миром
 
 
@@ -1829,6 +1833,11 @@ const Audio2D = (() => {
     hit(x, y)     { burst({ x, y, vol: .32, freq: 2100, q: 2.4, decay: .06 }); },
     hurt()        { tone({ vol: .35, f0: 200, f1: 70, decay: .25, type: 'sawtooth' }); },
     knife(x, y)   { burst({ x, y, vol: .3, freq: 3000, q: 3, decay: .08 }); },
+    boom(x, y) {
+      burst({ x, y, vol: .95, freq: 170, q: .7, decay: .5, type: 'lowpass' });
+      burst({ x, y, vol: .5, freq: 900, q: .8, decay: .22 });
+      tone({ x, y, vol: .5, f0: 95, f1: 28, decay: .7, type: 'sine' });
+    },
     ui(up = true) { tone({ vol: .18, f0: up ? 520 : 400, f1: up ? 760 : 240, decay: .09, type: 'triangle' }); },
     roundWin()    { tone({ vol: .3, f0: 420, f1: 840, decay: .45, type: 'triangle' }); },
     roundLose()   { tone({ vol: .3, f0: 380, f1: 120, decay: .6, type: 'sawtooth' }); },
@@ -2055,6 +2064,16 @@ function hitscan(ox, oy, ang, w, attacker) {
     const t = rayHitsEntity(ox, oy, dx, dy, e);
     if (t !== null && t > 0 && t < bestT) { bestT = t; victim = e; }
   }
+  // Бочку поджигает только пуля своих: для врагов это просто железо на полу,
+  // иначе промах по игроку взрывал бы бочку у него за спиной.
+  let barrel = null;
+  if (attacker.team === 'ct') {
+    for (const br of barrels) {
+      if (!br.alive) continue;
+      const t = rayCircle(ox, oy, dx, dy, br.x, br.y, br.r);
+      if (t > 0 && t < bestT) { bestT = t; barrel = br; victim = null; }
+    }
+  }
 
   const hx = ox + dx * bestT, hy = oy + dy * bestT;
   const muzzle = Math.min(bestT, (attacker.r || 11) + 4);
@@ -2078,6 +2097,9 @@ function hitscan(ox, oy, ang, w, attacker) {
     const dealt = w.dmg * falloff * penalty * damageScale(attacker);
     applyDamage(victim, dealt, w.pierce, attacker);
     bleed(hx, hy, ang, clamp(dealt / 40, 0.5, 1.6));
+  } else if (barrel) {
+    barrel.by = attacker;
+    explodeBarrel(barrel);
   } else if (bestT < w.range - 1) {
     // По чему пришлось попадание — по бетону или по ящику.
     const material = cell(Math.floor((hx + dx * 2) / CFG.TILE), Math.floor((hy + dy * 2) / CFG.TILE));
@@ -2103,6 +2125,201 @@ function alertShotBots(attacker, ox, oy, hx, hy, victim) {
     }
     if (noticed) b.onShot(ox, oy);
   }
+}
+
+/* ── Красные бочки ─────────────────────────────────────────────────────────
+   Инструмент игрока: взрываются от пули своих и ранят только врагов. Стоят
+   у постов, чтобы одним выстрелом можно было снять пост, но грохот слышен
+   далеко — за удобство платишь тишиной. */
+const BARREL = {
+  R: 13,                  // радиус бочки, px
+  BLAST: 120,             // радиус взрыва, px
+  DMG_CORE: 260,          // урон вплотную к бочке
+  DMG_EDGE: 40,           // урон на краю взрыва
+  PIERCE: 1,              // бронежилет от огня не спасает, спасает только шлем
+  CHAIN: 0.15,            // через сколько взрывается соседняя бочка, с
+  NOISE: 900,             // радиус грохота, px
+  // Расстановка, в клетках.
+  POST_MIN: 1.4,          // ближе — враг стоял бы на самой бочке
+  POST_MAX: 2.0,          // дальше — враг в шлеме мог бы пережить взрыв
+  SERVED: 6,              // пост в этом радиусе от бочки уже при деле
+  SPACING: 2,             // минимум между бочками
+  FROM_SPAWN: 6,          // шагов от старта: не у самого входа
+  SIGHT_MIN: 4,           // бочку видно с подхода не вплотную…
+  SIGHT_MAX: 12,          // …но и не с другого конца карты
+  MIN: 3, MAX: 6,         // сколько бочек на карте
+};
+
+/** Расстояние от точки до отрезка. */
+function segDist(px, py, ax, ay, bx, by) {
+  const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy || 1;
+  const t = clamp(((px - ax) * dx + (py - ay) * dy) / len2, 0, 1);
+  return dist(px, py, ax + dx * t, ay + dy * t);
+}
+
+/** Урон по расстоянию от бочки до края тела: к краю взрыва слабее. */
+const blastDamage = d => lerp(BARREL.DMG_CORE, BARREL.DMG_EDGE, clamp(d / BARREL.BLAST, 0, 1));
+
+function addBarrel(x, y) {
+  const br = { x, y, r: BARREL.R, alive: true, fuse: -1, by: null };
+  barrels.push(br);
+  return br;
+}
+
+/** Взрыв. Ранит только врагов, и только тех, кого не прикрыла стена или
+ *  ящик. Убитые засчитываются тому, кто поджёг: игроку или бойцу отряда. */
+function explodeBarrel(br) {
+  if (!br.alive) return;
+  br.alive = false;
+  const { x, y } = br;
+  for (const b of bots) {
+    if (!b.alive) continue;
+    const d = Math.max(0, dist(b.x, b.y, x, y) - b.r);
+    if (d > BARREL.BLAST || !lineClear(x, y, b.x, b.y)) continue;
+    applyDamage(b, blastDamage(d), BARREL.PIERCE, br.by);
+    if (b.alive) bleed(b.x, b.y, Math.atan2(b.y - y, b.x - x), 1);
+  }
+  // Соседняя бочка вспыхивает не сразу: цепочку должно быть видно глазами.
+  for (const o of barrels) {
+    if (!o.alive || o.fuse >= 0) continue;
+    if (dist(o.x, o.y, x, y) > BARREL.BLAST || !lineClear(x, y, o.x, o.y)) continue;
+    o.fuse = BARREL.CHAIN;
+    o.by = br.by;
+  }
+
+  blasts.push({ x, y, life: 1, seed: Math.random() });
+  flashes.push({ x, y, life: 1, r: BARREL.BLAST * 1.7, color: '#ffb45e' });
+  burstParticles(28, { x, y, speed: 330, life: 0.55, size: 3.2, drag: 4.5, glow: true,
+    colors: ['#fff3c4', '#ffd166', '#ff9b3f', '#ff5a1f'] });
+  burstParticles(10, { x, y, speed: 95, life: 1.2, size: 9, drag: 2.2,
+    colors: ['rgba(58,56,54,.55)', 'rgba(88,84,78,.45)'] });            // дым
+  burstParticles(9, { x, y, speed: 250, life: 0.5, size: 2.6, drag: 5, settle: 'chip',
+    colors: ['#8e1b12', '#b3261b', '#3b3b3b'] });                        // обломки бочки
+  decals.push({ x, y, kind: 'scorch', life: 1, decay: 0.004, r: BARREL.BLAST * 0.42, seed: Math.random() });
+  const near = dist(player.x, player.y, x, y);
+  if (near < 520) player.shake = Math.max(player.shake || 0, 0.6 * (1 - near / 520));
+  Audio2D.boom(x, y);
+  emitNoise(x, y, BARREL.NOISE, 'ct', 'blast');
+}
+
+/** Горящие фитили цепочки. */
+function updateBarrels(dt) {
+  for (const br of barrels) {
+    if (!br.alive || br.fuse < 0) continue;
+    br.fuse -= dt;
+    if (br.fuse <= 0) explodeBarrel(br);
+  }
+}
+
+function barrelSpots() {
+  if (!BARREL_SPOTS) BARREL_SPOTS = planBarrels();
+  return BARREL_SPOTS;
+}
+
+/** Расстановка по одной на группу постов: бочка в 1.4–2 клетках от поста,
+ *  на открытом месте, видна с подхода и стоит там, где взрыв заденет больше
+ *  всего врагов. Случайности нет — та же операция получает те же бочки. */
+function planBarrels() {
+  const T = CFG.TILE;
+  const tileOf = p => [Math.floor(p.x / T), Math.floor(p.y / T)];
+
+  // Шагов от старта по полу. Клетки ближе к старту — это подход к бочке.
+  const steps = new Int32Array(MAP_W * MAP_H).fill(-1);
+  const [sx, sy] = tileOf(SPAWN_CT);
+  const queue = [[sx, sy]];
+  steps[gi(sx, sy)] = 0;
+  for (let h = 0; h < queue.length; h++) {
+    const [qx, qy] = queue[h];
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const nx = qx + dx, ny = qy + dy;
+      if (!walkable(nx, ny) || steps[gi(nx, ny)] >= 0) continue;
+      steps[gi(nx, ny)] = steps[gi(qx, qy)] + 1;
+      queue.push([nx, ny]);
+    }
+  }
+  const stepsAt = p => { const [tx, ty] = tileOf(p); return steps[gi(tx, ty)]; };
+
+  const posts = ENEMY_POSTS.map(p => p.at);
+  const killR = BARREL.POST_MAX * T + 1;
+  const inRescue = c => c.x > RESCUE.x - T && c.x < RESCUE.x + RESCUE.w + T &&
+                        c.y > RESCUE.y - T && c.y < RESCUE.y + RESCUE.h + T;
+
+  // Открытое место: вокруг пол со всех сторон, поэтому бочка не сужает проход
+  // и не стоит в двери. Не на старте, не в эвакуации, не на заложнике и посту.
+  const fits = (tx, ty, c) => {
+    for (let j = -1; j <= 1; j++) for (let i = -1; i <= 1; i++) if (!walkable(tx + i, ty + j)) return false;
+    if (steps[gi(tx, ty)] < BARREL.FROM_SPAWN || inRescue(c)) return false;
+    if (HOSTAGE_POS.some(h => dist(h.x, h.y, c.x, c.y) < T)) return false;
+    return posts.every(p => dist(p.x, p.y, c.x, c.y) >= BARREL.POST_MIN * T - 1);
+  };
+  // Видна с пути игрока: есть клетка ближе к старту, откуда до бочки прямая
+  // линия, и на этой линии не стоит враг — иначе пуля попадёт в него, а не в бочку.
+  const clearOfPosts = (ax, ay, c) => posts.every(p => segDist(p.x, p.y, ax, ay, c.x, c.y) > CFG.BOT_R + BARREL.R);
+  const seenFromApproach = (tx, ty, c) => {
+    const own = steps[gi(tx, ty)], R = BARREL.SIGHT_MAX;
+    for (let y = ty - R; y <= ty + R; y++)
+      for (let x = tx - R; x <= tx + R; x++) {
+        if (!walkable(x, y)) continue;
+        const d = Math.hypot(x - tx, y - ty);
+        if (d < BARREL.SIGHT_MIN || d > R) continue;
+        const st = steps[gi(x, y)];
+        if (st < 0 || st >= own) continue;
+        const ax = (x + 0.5) * T, ay = (y + 0.5) * T;
+        if (lineClear(ax, ay, c.x, c.y) && clearOfPosts(ax, ay, c)) return true;
+      }
+    return false;
+  };
+  // Сколько врагов снимет взрыв: в зоне гибели — много очков, в зоне ранения — мало.
+  const score = (c, tx, ty, post) => {
+    let s = 0;
+    for (const p of posts) {
+      const d = dist(p.x, p.y, c.x, c.y);
+      if (d > BARREL.BLAST || !lineClear(c.x, c.y, p.x, p.y)) continue;
+      s += d <= killR ? 10 : 3;
+    }
+    if (steps[gi(tx, ty)] <= stepsAt(post)) s += 2;     // со стороны подхода, а не за спиной врага
+    if (chosen.some(o => dist(o.x, o.y, c.x, c.y) <= BARREL.BLAST)) s -= 5;   // цепочки — редкость
+    return s;
+  };
+
+  const chosen = [];
+  const order = posts.map((p, i) => i).sort((a, b) => stepsAt(posts[a]) - stepsAt(posts[b]) || a - b);
+  const pass = strict => {
+    for (const i of order) {
+      const post = posts[i];
+      // Сначала по бочке на группу постов; если не набралось — ко всем постам,
+      // которые ещё не в зоне гибели ни одной бочки.
+      if (strict ? chosen.some(o => dist(o.x, o.y, post.x, post.y) <= BARREL.SERVED * T)
+                 : chosen.some(o => dist(o.x, o.y, post.x, post.y) <= killR && lineClear(o.x, o.y, post.x, post.y)))
+        continue;
+      const [px, py] = tileOf(post);
+      const cands = [];
+      for (let dy = -2; dy <= 2; dy++)
+        for (let dx = -2; dx <= 2; dx++) {
+          const tx = px + dx, ty = py + dy;
+          if (!inBounds(tx, ty)) continue;
+          const c = tc(tx, ty);
+          const d = dist(c.x, c.y, post.x, post.y);
+          if (d < BARREL.POST_MIN * T - 1 || d > killR) continue;
+          if (!fits(tx, ty, c) || !lineClear(c.x, c.y, post.x, post.y)) continue;
+          if (chosen.some(o => dist(o.x, o.y, c.x, c.y) < BARREL.SPACING * T - 1)) continue;
+          cands.push({ c, tx, ty, s: score(c, tx, ty, post) });
+        }
+      cands.sort((a, b) => b.s - a.s);
+      const pick = cands.find(k => seenFromApproach(k.tx, k.ty, k.c));
+      if (pick) chosen.push(pick.c);
+    }
+  };
+  pass(true);
+  if (chosen.length < BARREL.MIN) pass(false);
+  // Лишние прореживаем равномерно по маршруту: бочки нужны на всём пути,
+  // а не только в первых комнатах. Выбор идёт от старта, поэтому порядок
+  // в chosen — это и есть порядок по маршруту.
+  if (chosen.length > BARREL.MAX) {
+    const n = chosen.length;
+    return Array.from({ length: BARREL.MAX }, (_, k) => chosen[Math.round(k * (n - 1) / (BARREL.MAX - 1))]);
+  }
+  return chosen;
 }
 
 /** Выстрел. Общий для игрока и ботов: патроны, разброс, отдача, шум. */
@@ -3009,6 +3226,9 @@ function startRound() {
 
   tracers = []; noises = [];
   decals = []; corpses = []; flashes = []; popups = []; drops = []; particles = [];
+  // Бочки каждый раунд стоят заново: взорванная в прошлом раунде снова цела.
+  barrels = []; blasts = [];
+  for (const p of barrelSpots()) addBarrel(p.x, p.y);
 
   state.phase = PHASE.BUY;
   state.timer = CFG.BUY_TIME;
@@ -3360,6 +3580,7 @@ function updateWorld(dt) {
     for (const b of bots) b.update(dt);
     updateSquad(dt);
     for (const h of hostages) h.update(dt);
+    updateBarrels(dt);
   }
   if (state.phase === PHASE.LIVE) separateEntities();
   updateGait(player, dt);
@@ -3373,6 +3594,7 @@ function updateWorld(dt) {
   const cap = (arr, n) => (arr.length > n ? arr.slice(arr.length - n) : arr);
   tracers = fade(tracers, 7);
   flashes = fade(flashes, 9);
+  blasts = fade(blasts, 1.7);
   noises = fade(noises, 0.8);
   popups = fade(popups, 0.75);
   for (const p of particles) {
@@ -3440,6 +3662,24 @@ function separateEntities() {
       dx = Math.cos(ang); dy = Math.sin(ang); d = 1;
     }
     moveEntity(a, (dx / d) * (need - d), (dy / d) * (need - d));
+  }
+  // Бочка стоит намертво: от неё отходят все, игрок тоже — иначе сквозь неё
+  // проходили бы, как сквозь нарисованную.
+  if (player.alive) movers.push(player);
+  for (const br of barrels) {
+    if (!br.alive) continue;
+    for (let i = 0; i < movers.length; i++) {
+      const e = movers[i];
+      const need = e.r + br.r;
+      let dx = e.x - br.x, dy = e.y - br.y;
+      let d = Math.hypot(dx, dy);
+      if (d >= need) continue;
+      if (d < 1e-3) {                         // ровно в центре — выходит вбок
+        const ang = (i * 2.39996) % TAU;
+        dx = Math.cos(ang); dy = Math.sin(ang); d = 1;
+      }
+      moveEntity(e, (dx / d) * (need - d), (dy / d) * (need - d));
+    }
   }
 }
 
@@ -4932,6 +5172,12 @@ function drawDecals() {
       ctx.translate(d.x, d.y); ctx.rotate(d.seed * TAU);
       ctx.fillRect(-d.r, -d.r * 0.5, d.r * 2, d.r);
       ctx.restore();
+    } else if (d.kind === 'scorch') {
+      const g = ctx.createRadialGradient(d.x, d.y, 0, d.x, d.y, d.r);
+      g.addColorStop(0, 'rgba(8,6,5,.9)'); g.addColorStop(0.55, 'rgba(22,15,10,.6)');
+      g.addColorStop(1, 'rgba(22,15,10,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath(); ctx.arc(d.x, d.y, d.r, 0, TAU); ctx.fill();
     } else {
       ctx.fillStyle = '#0a0d12';
       ctx.beginPath(); ctx.arc(d.x, d.y, d.r || 2.6, 0, TAU); ctx.fill();
@@ -5155,6 +5401,65 @@ function drawProjectilesAndFx() {
   ctx.globalAlpha = 1;
 }
 
+
+/** Красная бочка сверху: крышка с ободом, пробка и жёлтое кольцо-предупреждение —
+ *  чтобы не спутать с ржавыми бочками-декором, лежащими на боку. */
+function drawBarrels() {
+  for (const br of barrels) {
+    if (!br.alive) continue;
+    const { x, y, r } = br;
+    ctx.fillStyle = 'rgba(0,0,0,.38)';
+    ctx.beginPath(); ctx.ellipse(x + 3, y + 4, r + 1, r * 0.92, 0, 0, TAU); ctx.fill();
+    const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
+    g.addColorStop(0, '#ff7564'); g.addColorStop(0.55, '#d42a1d'); g.addColorStop(1, '#8a140e');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#5a0c08'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(x, y, r - 0.8, 0, TAU); ctx.stroke();
+    // Кольцо-предупреждение: жёлтое с чёрными насечками.
+    ctx.strokeStyle = '#ffc93c'; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.arc(x, y, r * 0.66, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = '#1a1410'; ctx.lineWidth = 2.6;
+    for (let k = 0; k < 6; k++) {
+      const a = k * TAU / 6 + 0.3;
+      ctx.beginPath(); ctx.arc(x, y, r * 0.66, a, a + 0.32); ctx.stroke();
+    }
+    ctx.fillStyle = '#7a7f86';                                   // пробка
+    ctx.beginPath(); ctx.arc(x + r * 0.28, y - r * 0.26, 2.2, 0, TAU); ctx.fill();
+    // Подожжённая цепочкой — горит, пока не рванёт.
+    if (br.fuse >= 0) {
+      ctx.globalCompositeOperation = 'lighter';
+      const f = ctx.createRadialGradient(x, y, 0, x, y, r * 1.8);
+      f.addColorStop(0, 'rgba(255,220,120,.9)'); f.addColorStop(1, 'rgba(255,90,30,0)');
+      ctx.fillStyle = f;
+      ctx.beginPath(); ctx.arc(x, y, r * (1.5 + Math.random() * 0.4), 0, TAU); ctx.fill();
+      ctx.globalCompositeOperation = 'source-over';
+    }
+  }
+}
+
+/** Огненный шар и ударная волна. Шар раздувается и гаснет, кольцо уходит
+ *  до края взрыва — видно, докуда достало. */
+function drawBlasts() {
+  if (!blasts.length) return;
+  ctx.globalCompositeOperation = 'lighter';
+  for (const b of blasts) {
+    const t = 1 - clamp(b.life, 0, 1);
+    const grow = 1 - (1 - t) * (1 - t);
+    const r = BARREL.BLAST * (0.3 + 0.55 * grow);
+    const g = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, r);
+    g.addColorStop(0, `rgba(255,248,220,${0.95 * b.life})`);
+    g.addColorStop(0.35, `rgba(255,190,80,${0.8 * b.life})`);
+    g.addColorStop(0.7, `rgba(240,90,30,${0.45 * b.life})`);
+    g.addColorStop(1, 'rgba(160,40,10,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(b.x, b.y, r, 0, TAU); ctx.fill();
+    ctx.strokeStyle = `rgba(255,230,190,${0.55 * b.life})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(b.x, b.y, BARREL.BLAST * (0.25 + 0.8 * grow), 0, TAU); ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
 
 /** Звуковые метки — единственное, что видно сквозь тьму. */
 function drawNoises() {
@@ -5575,6 +5880,12 @@ function drawMinimap() {
       ctx.beginPath(); ctx.arc(b.x, b.y, 26, 0, TAU); ctx.fill();
     }
   }
+  // Бочки видны всегда: это часть обстановки, по ним планируют заход.
+  ctx.fillStyle = '#ff4a3d';
+  for (const br of barrels) {
+    if (!br.alive) continue;
+    ctx.beginPath(); ctx.arc(br.x, br.y, 18, 0, TAU); ctx.fill();
+  }
   // Отряд на карте: точка цвета класса, у раненого — красная.
   for (const a of allies) {
     if (!a.alive && !a.down) continue;
@@ -5784,10 +6095,12 @@ function render() {
   drawDecals();
   drawCorpses();
   drawDrops();
+  drawBarrels();
   drawHostages(false);
   drawBots();
   drawParticles();
   drawProjectilesAndFx();
+  drawBlasts();
   drawDustMotes();
   ctx.restore();
 
@@ -7409,6 +7722,15 @@ const ADMIN_COMMANDS = [
         made++;
       }
       return made ? `врагов добавлено: ${made}` : 'под курсором стена — некуда ставить';
+    } },
+
+  { name: 'barrel', args: '', desc: 'красная бочка под курсором',
+    run: () => {
+      if (!state.running) return 'сначала зайди в операцию';
+      const m = mouseWorld();
+      if (hitsWall(m.x, m.y, BARREL.R)) return 'под курсором стена — некуда ставить';
+      addBarrel(m.x, m.y);
+      return `бочка в точке ${Math.round(m.x)}, ${Math.round(m.y)}`;
     } },
 
   { name: 'tp', args: '', desc: 'перенестись под курсор',

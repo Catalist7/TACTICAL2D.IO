@@ -7,6 +7,7 @@
     python3 tests/build.py
     node tests/build/frame-fight.js   tests/build/frame.svg     # бой на сгенерированной карте
     node tests/build/frame-closeup.js tests/build/closeup.svg   # ближний план: кровь, искры, гильзы
+    node tests/build/frame-barrels.js tests/build/barrel-a.svg tests/build/barrel-b.svg   # бочка у поста: до и после взрыва
     node tests/build/guns-sheet.js                              # силуэты всех стволов
     node tests/build/arsenal-snapshot.js armor                  # экран арсенала как HTML
 
