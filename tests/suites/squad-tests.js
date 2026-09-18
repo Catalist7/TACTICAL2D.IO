@@ -80,11 +80,11 @@ function lane() {
   const costs = [];
   for (let l = 1; l < 10; l++) costs.push(allyUpgradeCost(l));
   const total = costs.reduce((a, b) => a + b, 0);
-  say(costs.join() === '200,600,1150,1750,2400,3150,3900,4650,5500', `цены уровней: ${costs.join(', ')}`);
+  say(costs.join() === '200,550,1000,1500,2050,2650,3300,3950,4700', `цены уровней: ${costs.join(', ')}`);
   say(costs.every((c, i) => i === 0 || c > costs[i - 1]), 'каждый следующий уровень дороже предыдущего');
   const steps = costs.map((c, i) => c - (costs[i - 1] || 0)).slice(1);
   say(steps.some((s, i) => i === 0 || s !== steps[i - 1]), 'рост цены нелинейный, не арифметическая прогрессия');
-  say(total === 23300, `полная прокачка бойца — ${money(total)}`);
+  say(total === 19900, `полная прокачка бойца — ${money(total)}`);
   say(total > 10 * CFG.PAY_FIRST_CLEAR, 'это дороже десяти операций: цель на всю игру');
   say(allyUpgradeCost(10) === 0, 'с десятого уровня улучшать некуда');
 }
@@ -417,6 +417,48 @@ function lane() {
   say(a.hp === hp0 && a.armor === a.armorMax - 50, 'броня союзника держит урон целиком, как у игрока');
 }
 
+// ── Ликвидации отряда засчитываются и оплачиваются ────────────────────────
+{
+  const [a] = squadOf([['assault', 5]]);
+  progress.money = 0;
+  player.kills = 0; player.squadKills = 0;
+
+  // Врага снял боец.
+  const foe = bots[0];
+  Object.assign(foe, { alive: true, hp: 100, x: a.x + 120, y: a.y });
+  killEntity(foe, a);
+  say(player.kills === 1, 'ликвидация бойцом засчитана игроку');
+  say(player.squadKills === 1, 'и отдельно записана как отрядная');
+  say(progress.money === CFG.PAY_KILL, `за неё заплатили: ${money(progress.money)}`);
+
+  // Врага снял игрок — платят столько же.
+  const foe2 = bots[1];
+  Object.assign(foe2, { alive: true, hp: 100, x: player.x + 120, y: player.y });
+  killEntity(foe2, player);
+  say(player.kills === 2 && player.squadKills === 1, 'своя ликвидация в отрядные не попадает');
+  say(progress.money === CFG.PAY_KILL * 2, 'за свою платят столько же');
+
+  // За заложника и за своих денег нет.
+  const before = progress.money;
+  const h = hostages[0];
+  Object.assign(h, { alive: true, hp: 100, rescued: false });
+  killEntity(h, player);
+  say(progress.money === before && player.kills === 2, 'за заложника денег и зачёта нет');
+  applyDamage(a, 9999, 1, bots[2] || bots[0]);
+  say(progress.money === before && player.kills === 2, 'за раненого своего тоже');
+
+  // Деньги сохраняются сразу, не только по итогам операции.
+  const money0 = progress.money;
+  progress.money = 0;
+  loadProgress();
+  say(progress.money === money0, 'заработанное в бою попадает в сохранение сразу');
+
+  // За полную зачистку набегает ощутимо, но меньше выплаты за операцию.
+  const perRound = CFG.PAY_KILL * ENEMY_POSTS.length;
+  say(perRound > 0 && perRound < CFG.PAY_FIRST_CLEAR,
+      `зачистка карты даёт ${money(perRound)} — меньше выплаты за операцию ${money(CFG.PAY_FIRST_CLEAR)}`);
+}
+
 // ── Отряд не проходит уровень за игрока ───────────────────────────────────
 {
   progress.squad = [{ cls: 'assault', level: 10 }, { cls: 'assault', level: 10 },
@@ -427,7 +469,8 @@ function lane() {
   for (let i = 0; i < 60 * 120 && bots.some(b => b.alive); i++) updateWorld(DT);
   const left = bots.filter(b => b.alive).length;
   say(left > 0, `за две минуты без игрока отряд не зачистил карту: осталось ${left} из ${total}`);
-  say(player.kills === 0, 'и чужие ликвидации игроку не засчитываются');
+  say(player.kills === player.squadKills,
+      'а те, что есть, все отрядные — игрок не сделал ни одной');
 }
 
 // ── Кадр и отрисовка ──────────────────────────────────────────────────────

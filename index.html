@@ -445,6 +445,7 @@ const CFG = {
   PAY_REPLAY: 450,              // повторное прохождение
   PAY_ROUND_LOST: 25,           // за попытку: каждый проигранный раунд
   PAY_HOSTAGE: 40,              // за каждого выведенного заложника
+  PAY_KILL: 60,                 // за каждого ликвидированного врага — и своего, и отрядом
 
   // Заложники
   HOSTAGE_R: 10,
@@ -1447,8 +1448,8 @@ const ALLY_RANKS = ['Рядовой', 'Сержант', 'Старшина', 'П�
 const allyRank = level => ALLY_RANKS[clamp(level, 1, SQUAD.MAX_LEVEL) - 1];
 
 /** Цена перехода с уровня N на N+1. Рост нелинейный: полная прокачка бойца
- *  стоит $23 300 — дороже, чем прокачать автомат игрока до десятого. */
-const SQUAD_COST = [200, 600, 1150, 1750, 2400, 3150, 3900, 4650, 5500];
+ *  стоит $19 900 — дороже, чем прокачать автомат игрока до десятого. */
+const SQUAD_COST = [200, 550, 1000, 1500, 2050, 2650, 3300, 3950, 4700];
 const allyUpgradeCost = level => SQUAD_COST[clamp(level, 1, SQUAD.MAX_LEVEL) - 1] || 0;
 
 // Броня по уровням — общая для всех классов, у щитоносца десятый уровень тяжелее.
@@ -1536,7 +1537,7 @@ const player = {
   active: 'pistol',
   ammo: {},           // id → { mag, reserve }
   cooldown: 0, reloading: 0, stepPhase: 0,
-  kills: 0, deaths: 0,
+  kills: 0, deaths: 0, squadKills: 0,
 };
 
 let bots = [];
@@ -1997,8 +1998,14 @@ function killEntity(t, attacker) {
     if (hw && hw.slot !== 'melee') {
       drops.push({ x: t.x, y: t.y, wid: t.weapon, ammo: t.ammo[t.weapon] || { mag: hw.mag, reserve: hw.reserve } });
     }
-    if (attacker === player) {
+    // Ликвидация засчитывается и оплачивается одинаково: сам ты снял врага
+    // или твой боец. Отрядные считаются отдельно — видно, кто сколько сделал.
+    const bySquad = attacker && attacker.kind === 'ally';
+    if (attacker === player || bySquad) {
       player.kills++;
+      if (bySquad) player.squadKills++;
+      addMoney(CFG.PAY_KILL);
+      notice(t.x, t.y, '+' + money(CFG.PAY_KILL), true);
     }
   } else if (t === player) {
     player.deaths++;
@@ -7608,7 +7615,7 @@ function startLevel(i) {
   state.scoreCT = state.scoreT = 0;
   state.roundsLost = 0;
   state.survivedLastRound = false;
-  player.kills = 0; player.deaths = 0;
+  player.kills = 0; player.deaths = 0; player.squadKills = 0;
 
   startRound();
   startTutorialRun(i);
@@ -7646,7 +7653,7 @@ function completeLevel() {
   const stats = [
     ['+' + money(payout), firstClear ? 'за первое прохождение' : 'за повторное прохождение'],
     [money(progress.money), 'в кошельке'],
-    [String(player.kills), 'ликвидировано'],
+    [String(player.kills), player.squadKills ? `ликвидировано (отряд ${player.squadKills})` : 'ликвидировано'],
     [`${rescued}/${hostages.length}`, 'заложников спасено'],
   ];
   for (const [value, label] of stats) {
