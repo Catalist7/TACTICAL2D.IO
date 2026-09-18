@@ -399,7 +399,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    CONFIG — весь баланс собран здесь. Меняй числа, не трогая логику.
    ═══════════════════════════════════════════════════════════════════════════ */
-const GAME_VERSION = '1.3.0';   // показывается в главном меню; см. CHANGELOG.md
+const GAME_VERSION = '1.2.1';   // показывается в главном меню; см. CHANGELOG.md
 
 const CFG = {
   TILE: 40,
@@ -458,8 +458,6 @@ const CFG = {
   ZOOM: 1.3,                    // желаемый масштаб мира; хитбоксы не меняются
   MIN_VIEW_W: 1040,             // сколько мира обязано остаться видно по ширине
   MIN_VIEW_H: 600,              // и по высоте — иначе зум ослабляется сам
-  MIN_ZOOM_TOUCH: 0.85,         // на телефоне даём отдалиться: иначе видно полкомнаты
-  LEAD_TOUCH: 0.45,             // и камера сильнее уходит за прицелом
   GAIT_CYCLE: 27,               // пикселей пути на один шаг анимации
 
   // Пробитие преград. Бюджет задаётся в «блоках» — это одна клетка карты.
@@ -3127,14 +3125,10 @@ function resize() {
 window.addEventListener('resize', resize);
 
 /** Действующий масштаб. Желаемый берётся из конфига, но если окно маленькое —
- *  зум ослабляется, чтобы обзор не срезался. На мыши и клавиатуре не меньше единицы,
- *  на телефоне не меньше MIN_ZOOM_TOUCH — там экран втрое меньше и видно полкомнаты. */
+ *  зум ослабляется, чтобы обзор не срезался. Никогда не меньше единицы. */
 function zoom() {
   if (!view.w || !view.h) return 1;
-  // На телефоне экран втрое меньше окна, поэтому нижнюю границу опускаем:
-  // лучше мелкие фигуры, чем враг, стреляющий из-за края кадра.
-  const floor = touchMode() ? CFG.MIN_ZOOM_TOUCH : 1;
-  return clamp(Math.min(CFG.ZOOM, view.w / CFG.MIN_VIEW_W, view.h / CFG.MIN_VIEW_H), floor, CFG.ZOOM);
+  return clamp(Math.min(CFG.ZOOM, view.w / CFG.MIN_VIEW_W, view.h / CFG.MIN_VIEW_H), 1, CFG.ZOOM);
 }
 
 /** Размер видимой части мира с учётом зума. */
@@ -3144,7 +3138,6 @@ const mouseWorld = () => ({ x: camera.x + mouse.x / zoom(), y: camera.y + mouse.
 const worldToScreen = (wx, wy) => ({ x: (wx - camera.x) * zoom(), y: (wy - camera.y) * zoom() });
 
 canvas.addEventListener('mousemove', e => {
-  setInputMode('kbm');
   const r = canvas.getBoundingClientRect();
   mouse.x = e.clientX - r.left;
   mouse.y = e.clientY - r.top;
@@ -3160,188 +3153,6 @@ window.addEventListener('mouseup', e => {
   if (e.button === 2) mouse.right = false;
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   ВВОД С ЭКРАНА — тач не заводит вторую модель управления: он заполняет то же
-   состояние, что мышь и клавиши. Левый стик даёт вектор движения, правый
-   ставит курсор — дальше работает обычный код игрока и камеры.
-   ═══════════════════════════════════════════════════════════════════════════ */
-const STICK = {
-  RADIUS: 58,      // ход стика до упора
-  DEAD: 0.18,      // мёртвая зона: палец дрожит всегда
-  WALK: 0.45,      // слабее — тихий шаг, сильнее — бег
-  FIRE: 0.55,      // порог автоматического огня
-  CURSOR: 240,     // на сколько синтетический курсор отходит от центра экрана
-};
-
-const input = {
-  mode: 'kbm',                      // 'kbm' или 'touch', переключается по событиям
-  moveX: 0, moveY: 0, walk: false,
-  sticks: { move: null, aim: null },
-  firing: false,                    // признак, что правый стик за порогом огня
-  pointers: new Map(),              // id → к какому стику или кнопке привязан палец
-};
-const touchMode = () => input.mode === 'touch';
-
-/** Вектор стика в долях хода: длина 0…1, мёртвая зона уже вычтена. */
-function stickVector(s) {
-  if (!s) return { x: 0, y: 0, len: 0 };
-  const dx = s.x - s.x0, dy = s.y - s.y0;
-  const raw = Math.hypot(dx, dy) / STICK.RADIUS;
-  if (raw < STICK.DEAD) return { x: 0, y: 0, len: 0 };
-  const len = Math.min(1, (raw - STICK.DEAD) / (1 - STICK.DEAD));
-  const inv = 1 / (Math.hypot(dx, dy) || 1);
-  return { x: dx * inv, y: dy * inv, len };
-}
-
-/** Куда идёт игрок: клавиши или левый стик. Единственная точка, где сходятся
- *  оба способа управления. */
-function moveAxis() {
-  if (touchMode()) {
-    const v = stickVector(input.sticks.move);
-    return { x: v.x * v.len, y: v.y * v.len, walk: v.len > 0 && v.len < STICK.WALK };
-  }
-  let x = (held('d', 'в', 'arrowright') ? 1 : 0) - (held('a', 'ф', 'arrowleft') ? 1 : 0);
-  let y = (held('s', 'ы', 'arrowdown') ? 1 : 0) - (held('w', 'ц', 'arrowup') ? 1 : 0);
-  const len = Math.hypot(x, y);
-  if (len > 1) { x /= len; y /= len; }
-  return { x, y, walk: held('shift') };
-}
-
-/** Хочет ли игрок стрелять. Мышь различает удержание и щелчок: автоматика
- *  читает зажатую кнопку, полуавтоматика — одиночное нажатие. Пальцем щёлкать
- *  нечем, поэтому на телефоне решает отклонение стика, а темп всё равно
- *  ограничивает перезарядка ствола. */
-const wantsFire = w => (touchMode() ? input.firing : w.auto ? mouse.down : mouse.clicked);
-
-function setInputMode(mode) {
-  if (input.mode === mode) return;
-  input.mode = mode;
-  if (mode === 'kbm') { input.sticks.move = input.sticks.aim = null; input.pointers.clear(); }
-}
-
-function touchStart(id, x, y) {
-  setInputMode('touch');
-  // Кнопки срабатывают сразу; строка отряда — по отпусканию пальца.
-  const btn = hudButtonAt(x, y);
-  if (btn) { btn.act(); Audio2D.ui(true); input.pointers.set(id, 'ui'); return; }
-  const row = squadRowAt(x, y);
-  if (row !== null) { pressHold = { id, row, t: 0, done: false }; input.pointers.set(id, 'ui'); return; }
-  if (squadPanelClick(x, y)) { input.pointers.set(id, 'ui'); return; }   // «Все / Приказ / Авто»
-  // Левая половина экрана — движение, правая — прицел. Стик появляется там,
-  // где палец коснулся: фиксированный стик заставляет целиться вслепую.
-  const side = x < view.w / 2 ? 'move' : 'aim';
-  if (input.sticks[side]) return;           // этот стик уже держат
-  input.sticks[side] = { id, x0: x, y0: y, x, y };
-  input.pointers.set(id, side);
-}
-
-function touchMove(id, x, y) {
-  const side = input.pointers.get(id);
-  if (!side) return;
-  const s = input.sticks[side];
-  if (s && s.id === id) { s.x = x; s.y = y; }
-}
-
-function touchEnd(id) {
-  if (pressHold && pressHold.id === id) {
-    if (!pressHold.done) selectAlly(pressHold.row);   // короткое касание — один боец
-    pressHold = null;
-  }
-  const side = input.pointers.get(id);
-  input.pointers.delete(id);
-  if (side && input.sticks[side] && input.sticks[side].id === id) input.sticks[side] = null;
-  if (side === 'aim') { input.firing = false; mouse.down = false; }
-}
-
-/** Долгое нажатие: палец, задержанный на строке отряда, добавляет бойца к
- *  выделению — на телефоне Shift зажать нечем. Короткое касание выбирает
- *  одного, поэтому строка решает по отпусканию, а не по касанию. */
-const LONG_PRESS = 0.45;
-let pressHold = null;                  // { id, row, t, done } — палец на строке отряда
-
-/** Номер строки отряда под точкой или null. Строки идут в squadHitAreas первыми. */
-function squadRowAt(x, y) {
-  for (let i = 0; i < allies.length; i++) {
-    const a = squadHitAreas[i];
-    if (a && x >= a.x && x <= a.x + a.w && y >= a.y && y <= a.y + a.h) return i;
-  }
-  return null;
-}
-
-function longPressTick(dt) {
-  if (!pressHold || pressHold.done) return;
-  pressHold.t += dt;
-  if (pressHold.t < LONG_PRESS) return;
-  const a = allies[pressHold.row];
-  if (a && !a.down) a.selected = true;       // добавить, а не переключить
-  squadCmd.pending = false;
-  pressHold.done = true;
-  Audio2D.ui(true);
-}
-
-/** Мягкий доводчик: если в узком конусе есть видимый живой враг, прицел
- *  смещается к нему на половину разницы. Пальцем по фигуре в 21 пиксель
- *  иначе не попасть, но выбор цели остаётся за игроком. */
-const AIM_ASSIST = { CONE: 0.12, RANGE: 520, PULL: 0.5 };
-
-function aimAssist(ang) {
-  let best = null, bestOff = AIM_ASSIST.CONE;
-  for (const b of bots) {
-    if (!b.alive) continue;
-    const d = dist(player.x, player.y, b.x, b.y);
-    if (d > AIM_ASSIST.RANGE) continue;
-    if (!playerSees(b.x, b.y)) continue;
-    const to = Math.atan2(b.y - player.y, b.x - player.x);
-    const off = Math.abs(angDiff(to, ang));
-    if (off < bestOff) { bestOff = off; best = to; }
-  }
-  return best === null ? ang : ang + angDiff(best, ang) * AIM_ASSIST.PULL;
-}
-
-/** Правый стик: ставит курсор и решает, идёт ли огонь. Вызывается раз в кадр
- *  до обновления игрока — дальше работает обычный код прицела и стрельбы. */
-function applyAimStick() {
-  if (!touchMode()) return;
-  const v = stickVector(input.sticks.aim);
-  if (v.len) {
-    const ang = aimAssist(Math.atan2(v.y, v.x));
-    // Курсор ставится от бойца, а не от центра экрана: камера смещается за
-    // прицелом и прижимается к краям карты, и от центра угол уезжал бы.
-    const p = worldToScreen(player.x, player.y);
-    mouse.x = p.x + Math.cos(ang) * STICK.CURSOR;
-    mouse.y = p.y + Math.sin(ang) * STICK.CURSOR;
-  }
-  // Ниже порога огня нет, даже если палец остался на экране: иначе автомат
-  // продолжал бы стрелять после возврата стика в мёртвую зону.
-  input.firing = v.len >= STICK.FIRE;
-  mouse.down = input.firing;
-}
-
-const pointerXY = e => {
-  const r = canvas.getBoundingClientRect();
-  return { x: e.clientX - r.left, y: e.clientY - r.top };
-};
-
-canvas.addEventListener('pointerdown', e => {
-  if (e.pointerType === 'mouse') return;
-  e.preventDefault();
-  Audio2D.resume();
-  const p = pointerXY(e);
-  touchStart(e.pointerId, p.x, p.y);
-});
-canvas.addEventListener('pointermove', e => {
-  if (e.pointerType === 'mouse') return;
-  e.preventDefault();
-  const p = pointerXY(e);
-  touchMove(e.pointerId, p.x, p.y);
-});
-for (const type of ['pointerup', 'pointercancel'])
-  canvas.addEventListener(type, e => {
-    if (e.pointerType === 'mouse') return;
-    touchEnd(e.pointerId);
-  });
-
 canvas.addEventListener('wheel', e => { e.preventDefault(); cycleWeapon(e.deltaY > 0 ? 1 : -1); }, { passive: false });
 
 window.addEventListener('keydown', e => {
@@ -3479,11 +3290,11 @@ function updatePlayer(dt) {
   if (isFrozen()) { player.speed = 0; return; }
 
   player.aiming = mouse.right;
+  player.walking = held('shift');
 
-  const axis = moveAxis();
-  let dx = axis.x, dy = axis.y;
+  let dx = (held('d', 'в', 'arrowright') ? 1 : 0) - (held('a', 'ф', 'arrowleft') ? 1 : 0);
+  let dy = (held('s', 'ы', 'arrowdown') ? 1 : 0) - (held('w', 'ц', 'arrowup') ? 1 : 0);
   const len = Math.hypot(dx, dy);
-  player.walking = axis.walk;
   if (len > 0) {
     dx /= len; dy /= len;
     let sp = player.walking ? CFG.PLAYER_WALK : CFG.PLAYER_SPEED;
@@ -3515,7 +3326,8 @@ function updatePlayer(dt) {
 
   const w = activeWeapon();
   // Клик, которым отдали приказ отряду, стрелять не должен.
-  const wantFire = squadCmd.pending || squadCmd.fireLock > 0 ? false : wantsFire(w);
+  const wantFire = squadCmd.pending || squadCmd.fireLock > 0 ? false
+    : w.auto ? mouse.down : mouse.clicked;
   if (wantFire && player.cooldown <= 0) {
     fireWeapon(player, player.ang, moveSpread);
   }
@@ -3538,8 +3350,6 @@ function updateGait(e, dt) {
 }
 
 function updateWorld(dt) {
-  applyAimStick();
-  longPressTick(dt);
   // Клик по панели отряда — это команда, а не выстрел.
   if (mouse.clicked && squadPanelClick(mouse.x, mouse.y)) {
     mouse.clicked = false;
@@ -3636,8 +3446,7 @@ function separateEntities() {
 function updateCamera(dt) {
   // Камера смотрит чуть в сторону курсора — видно дальше в ту сторону, куда целишься.
   const { w: vw, h: vh } = viewWorld();
-  // Куда целишься — там видно дальше. На телефоне сильнее: обзор меньше.
-  const lead = touchMode() ? CFG.LEAD_TOUCH : 0.22;
+  const lead = 0.22;
   const tx = player.x + (mouse.x - view.w / 2) / zoom() * lead - vw / 2;
   const ty = player.y + (mouse.y - view.h / 2) / zoom() * lead - vh / 2;
   const k = 1 - Math.pow(0.0006, dt);
@@ -5610,75 +5419,6 @@ function squadPanelRect() {
   return { x: 18, y: view.h - 84 - 18 - h, w: SQUAD_PANEL.w, h };
 }
 
-/* ── Экранные кнопки ──────────────────────────────────────────────────────
-   Рисуются на канвасе и ловятся теми же прямоугольниками, что строки панели
-   отряда. На мыши их нет: там те же действия висят на клавишах. */
-let hudButtons = [];
-
-const HUD_BTN = 52;                  // сторона кнопки: палец меньше 44 не берёт
-
-function hudButtonAt(x, y) {
-  for (const b of hudButtons)
-    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return b;
-  return null;
-}
-
-/** Тап по интерфейсу: кнопка или панель отряда. true — событие съедено. */
-function hudTap(x, y) {
-  const b = hudButtonAt(x, y);
-  if (b) { b.act(); Audio2D.ui(true); return true; }
-  return squadPanelClick(x, y);
-}
-
-/** Раскладка кнопок вокруг правого стика и в углах. Порядок важен: по нему
- *  тесты и рисование ходят одинаково. Пауза стоит в ряд со слотами оружия
- *  у левого края — правый верхний угол занят миникартой. */
-function layoutHudButtons() {
-  hudButtons = [];
-  if (!touchMode()) return;
-  const s = HUD_BTN, gap = 8;
-  const right = view.w - s - 14, bottom = view.h - s - 14;
-  const add = (id, x, y, label, act) => hudButtons.push({ id, x, y, w: s, h: s, label, act });
-
-  add('reload', right, bottom - (s + gap) * 2, 'R', () => startReload(player));
-  add('use', right - (s + gap), bottom - (s + gap), 'E', () => useAction());
-  add('aim', right - (s + gap) * 2, bottom, 'ПРИЦЕЛ', () => { mouse.right = !mouse.right; });
-  ['rifle', 'pistol', 'melee'].forEach((slot, i) =>
-    add('slot' + i, 14 + (s + gap) * i, 14 + 60, String(i + 1), () => selectSlot(slot)));
-  add('pause', 14 + (s + gap) * 3, 14 + 60, '❚❚', () => togglePause());
-}
-
-function drawTouchControls() {
-  if (!touchMode()) return;
-  // Стики: основание там, где палец коснулся, и головка под пальцем.
-  for (const side of ['move', 'aim']) {
-    const st = input.sticks[side];
-    if (!st) continue;
-    const v = stickVector(st);
-    ctx.globalAlpha = 0.5;
-    ctx.strokeStyle = side === 'move' ? '#54a8ff' : '#ffc857';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(st.x0, st.y0, STICK.RADIUS, 0, TAU); ctx.stroke();
-    ctx.globalAlpha = 0.8;
-    ctx.fillStyle = side === 'move' ? '#54a8ff' : '#ffc857';
-    ctx.beginPath();
-    ctx.arc(st.x0 + v.x * v.len * STICK.RADIUS, st.y0 + v.y * v.len * STICK.RADIUS, 18, 0, TAU);
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-  for (const b of hudButtons) {
-    ctx.fillStyle = 'rgba(10,14,20,.66)';
-    roundRect(ctx, b.x, b.y, b.w, b.h, 12); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,.12)';
-    ctx.lineWidth = 1; ctx.stroke();
-    ctx.fillStyle = '#cfe6ff';
-    ctx.font = '700 11px ui-monospace, Menlo, monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 4);
-  }
-  ctx.textAlign = 'left';
-}
-
 function drawSquadPanel() {
   squadHitAreas = [];
   const box = squadPanelRect();
@@ -5808,26 +5548,18 @@ function buildMiniLayer(scale) {
   c.fillRect(RESCUE.x, RESCUE.y, RESCUE.w, RESCUE.h);
 }
 
-/** Геометрия миникарты — общий расчёт для отрисовки панели и для проверки,
- *  что экранные кнопки на неё не залезают. Возвращает прямоугольник панели
- *  (с отступом) и то, что нужно для отрисовки самой карты внутри него. */
-function minimapRect() {
+function drawMinimap() {
   const size = 168, pad = 10;
   const scale = Math.min(size / WORLD_W, size / WORLD_H);
   const mw = WORLD_W * scale, mh = WORLD_H * scale;
-  const innerX = view.w - mw - 18, innerY = 14;
-  return { x: innerX - pad, y: innerY - pad, w: mw + pad * 2, h: mh + pad * 2, innerX, innerY, scale };
-}
+  const x = view.w - mw - 18, y = 14;
 
-function drawMinimap() {
-  const { x, y, w, h: boxH, innerX: mx, innerY: my, scale } = minimapRect();
-
-  hudPanel(x, y, w, boxH);
+  hudPanel(x - pad, y - pad, mw + pad * 2, mh + pad * 2);
   if (!miniLayer || miniScale !== scale) buildMiniLayer(scale);
-  ctx.drawImage(miniLayer, mx, my);
+  ctx.drawImage(miniLayer, x, y);
 
   ctx.save();
-  ctx.translate(mx, my);
+  ctx.translate(x, y);
   ctx.scale(scale, scale);
 
   for (const h of hostages) {
@@ -6026,8 +5758,6 @@ function drawHUD() {
   drawWeaponPanel();
   drawHostagePanel();
   drawMinimap();
-  layoutHudButtons();
-  drawTouchControls();
   drawCentreMessage();
   drawTutorialHint();
   if (state.sheet) drawModelSheet();
@@ -6293,14 +6023,10 @@ function runTests() {
 
   // ── Камера и масштаб ──────────────────────────────────────────────────
   const z = zoom();
-  const zoomFloor = touchMode() ? CFG.MIN_ZOOM_TOUCH : 1;
-  ok('масштаб в допустимых границах', z >= zoomFloor && z <= CFG.ZOOM, `×${z.toFixed(2)}`);
+  ok('масштаб в допустимых границах', z >= 1 && z <= CFG.ZOOM, `×${z.toFixed(2)}`);
   const vwld = viewWorld();
-  // На узком экране (телефон) требование другое: там свой масштабный пол.
-  const wantW = Math.min(CFG.MIN_VIEW_W, view.w / CFG.MIN_ZOOM_TOUCH);
-  const wantH = Math.min(CFG.MIN_VIEW_H, view.h / CFG.MIN_ZOOM_TOUCH);
-  ok('видимой области хватает по ширине', vwld.w >= wantW - 0.5, `${vwld.w.toFixed(0)}px мира`);
-  ok('видимой области хватает по высоте', vwld.h >= wantH - 0.5, `${vwld.h.toFixed(0)}px мира`);
+  ok('видимой области хватает по ширине', vwld.w >= CFG.MIN_VIEW_W - 0.5, `${vwld.w.toFixed(0)}px мира`);
+  ok('видимой области хватает по высоте', vwld.h >= CFG.MIN_VIEW_H - 0.5, `${vwld.h.toFixed(0)}px мира`);
 
   {
     // Экран ↔ мир должны быть строго обратимы, иначе прицел уедет от курсора.
