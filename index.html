@@ -265,9 +265,9 @@
       <div><kbd>Shift</kbd> тихий шаг</div>
       <div><kbd>1 2 3</kbd> оружие</div>
       <div><kbd>E</kbd> заложник / подобрать ствол</div>
-      <div><kbd id="hintSquadKeys">5 6 7 8</kbd> выбрать бойца (с <kbd>Shift</kbd> — нескольких)</div>
-      <div><kbd id="hintAllKey">9</kbd> выделить весь отряд</div>
-      <div><kbd id="hintOrderKey">F</kbd> приказ отряду по клику</div>
+      <div><kbd id="hintSquadKeys">Z X C V</kbd> выбрать бойца и кликнуть, куда идти (с <kbd>Shift</kbd> — нескольких)</div>
+      <div><kbd id="hintAllKey">F</kbd> выделить весь отряд</div>
+      <div><kbd id="hintCancelKey">Q</kbd> снять выбор и стрелять самому</div>
       <div><kbd id="hintAutoKey">G</kbd> отряд в авто</div>
       <div><kbd>Esc</kbd> пауза</div>
     </div>
@@ -381,8 +381,8 @@
     <header><h1>Пауза<small>Операция приостановлена</small></h1></header>
     <div class="keys">
       <div><kbd>Esc</kbd> продолжить</div>
-      <div><kbd id="hintSquadKeys2">5 6 7 8</kbd> боец отряда</div>
-      <div><kbd id="hintOrderKey2">F</kbd> приказ · <kbd id="hintAutoKey2">G</kbd> авто</div>
+      <div><kbd id="hintSquadKeys2">Z X C V</kbd> боец отряда</div>
+      <div><kbd id="hintCancelKey2">Q</kbd> снять выбор · <kbd id="hintAutoKey2">G</kbd> авто</div>
       <div><kbd>~</kbd> отладочный обзор</div>
     </div>
     <footer>
@@ -399,7 +399,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    CONFIG — весь баланс собран здесь. Меняй числа, не трогая логику.
    ═══════════════════════════════════════════════════════════════════════════ */
-const GAME_VERSION = '1.4.1';   // показывается в главном меню; см. CHANGELOG.md
+const GAME_VERSION = '1.4.2';   // показывается в главном меню; см. CHANGELOG.md
 
 const CFG = {
   TILE: 40,
@@ -445,7 +445,7 @@ const CFG = {
   PAY_REPLAY: 450,              // повторное прохождение
   PAY_ROUND_LOST: 25,           // за попытку: каждый проигранный раунд
   PAY_HOSTAGE: 40,              // за каждого выведенного заложника
-  PAY_KILL: 60,                 // за каждого ликвидированного врага — и своего, и отрядом
+  PAY_KILL: 100,                // за каждого ликвидированного врага — и своего, и отрядом
 
   // Заложники
   HOSTAGE_R: 10,
@@ -1456,24 +1456,25 @@ const allyUpgradeCost = level => SQUAD_COST[clamp(level, 1, SQUAD.MAX_LEVEL) - 1
 
 // Броня по уровням — общая для всех классов, у щитоносца десятый уровень тяжелее.
 const ALLY_ARMOR = [0, 0, 50, 100, 100, 130, 130, 180, 180, 250];
-// Разброс и задержка реакции. Рядовой целится точнее рядового террориста
-// (0.18 против 0.22) и реагирует вдвое быстрее — дуэль один на один он
-// выигрывает с первого уровня. Игроку союзник всё равно уступает.
-const ALLY_AIM = [0.120, 0.112, 0.105, 0.097, 0.090, 0.082, 0.075, 0.065, 0.055, 0.045];
-const ALLY_REACT = [0.70, 0.66, 0.62, 0.58, 0.54, 0.50, 0.46, 0.42, 0.38, 0.34];
+// Разброс и задержка реакции. Рядовой целится точнее рядового террориста и
+// реагирует быстрее — дуэль один на один он выигрывает с первого уровня, три
+// раза из четырёх и чаще. Первые два звания чуть слабее остальных: в начале
+// игры отряд помогает, но не воюет за игрока. Игроку союзник всё равно уступает.
+const ALLY_AIM = [0.128, 0.119, 0.105, 0.097, 0.090, 0.082, 0.075, 0.065, 0.055, 0.045];
+const ALLY_REACT = [0.75, 0.70, 0.62, 0.58, 0.54, 0.50, 0.46, 0.42, 0.38, 0.34];
 
 const ALLY_CLASSES = [
   { id: 'assault', name: 'Штурмовик', short: 'ШТ', max: 2, price: 2500, accent: '#54a8ff',
     desc: 'Основная огневая сила отряда: идёт рядом и бьёт по всему, что видит',
     hp:     [110, 114, 118, 122, 126, 130, 134, 138, 144, 150],
-    dmg:    [.72, .74, .76, .78, .80, .82, .84, .86, .88, .90],
+    dmg:    [.69, .71, .76, .78, .80, .82, .84, .86, .88, .90],
     armor:  ALLY_ARMOR,
     guns:   ['p250', 'mac10', 'ump45', 'mp5', 'galil', 'famas', 'ak', 'm4', 'm4', 'aug'],
     gunLv:  [1, 1, 2, 3, 4, 5, 5, 6, 7, 7] },
   { id: 'medic', name: 'Медик', short: 'МД', max: 1, price: 2600, accent: '#3ddc97',
     desc: 'Лечит отряд на ходу. С пятого уровня поднимает одного раненого за раунд',
     hp:     [100, 104, 108, 112, 116, 120, 124, 128, 131, 135],
-    dmg:    [.60, .62, .64, .66, .68, .70, .72, .74, .76, .78],
+    dmg:    [.58, .60, .64, .66, .68, .70, .72, .74, .76, .78],
     armor:  ALLY_ARMOR,
     guns:   ['p250', 'p250', 'mac10', 'mac10', 'ump45', 'ump45', 'mp5', 'mp5', 'mp5', 'mp5'],
     gunLv:  [1, 2, 2, 3, 3, 4, 4, 5, 6, 7],
@@ -1481,7 +1482,7 @@ const ALLY_CLASSES = [
   { id: 'shield', name: 'Щитоносец', short: 'ЩТ', max: 1, price: 3000, accent: '#ffc857',
     desc: 'Идёт первым и держит щит: урон спереди уходит в щит, а не в отряд',
     hp:     [130, 134, 139, 143, 148, 152, 157, 161, 166, 170],
-    dmg:    [.55, .57, .59, .61, .63, .66, .68, .70, .72, .75],
+    dmg:    [.53, .55, .59, .61, .63, .66, .68, .70, .72, .75],
     armor:  [0, 0, 50, 100, 100, 130, 130, 180, 180, 350],
     guns:   ['p250', 'p250', 'usp', 'usp', 'fiveseven', 'fiveseven', 'deagle', 'deagle', 'deagle', 'deagle'],
     gunLv:  [1, 2, 2, 3, 3, 4, 4, 5, 6, 7],
@@ -1879,13 +1880,14 @@ const damageScale = attacker => (attacker === player ? 1
   : CFG.ENEMY_DAMAGE);
 
 /** Урон с учётом брони и шлема. Возвращает фактически снятое здоровье. */
-function applyDamage(t, dmg, pierce, attacker) {
+function applyDamage(t, dmg, pierce, attacker, source = attacker) {
   if (!t.alive) return 0;
   if (t === player && admin.god) return 0;      // панель разработчика: бессмертие
   let out = dmg;
   // Щит держит только фронт: удар в спину проходит мимо него целиком.
-  if (t.kind === 'ally' && t.shield > 0 && attacker) {
-    const from = Math.atan2(attacker.y - t.y, attacker.x - t.x);
+  // Сторону считаем от источника удара: у взрыва это бочка, а не поджёгший.
+  if (t.kind === 'ally' && t.shield > 0 && source) {
+    const from = Math.atan2(source.y - t.y, source.x - t.x);
     if (Math.abs(angDiff(from, t.ang)) <= SQUAD.SHIELD_ARC) {
       const held = Math.min(t.shield, dmg);
       t.shield -= held;
@@ -2128,26 +2130,28 @@ function alertShotBots(attacker, ox, oy, hx, hy, victim) {
 }
 
 /* ── Красные бочки ─────────────────────────────────────────────────────────
-   Инструмент игрока: взрываются от пули своих и ранят только врагов. Стоят
-   у постов, чтобы одним выстрелом можно было снять пост, но грохот слышен
-   далеко — за удобство платишь тишиной. */
+   Взрываются от пули своих и ранят всех рядом, кроме заложников: и врагов,
+   и игрока с отрядом. С одного раза не убивают — снимают три четверти
+   здоровья, поэтому бочка помогает зачистке, но не делает её за игрока.
+   Бочек на уровне одна-две, стоят у постов; грохот слышен далеко. */
 const BARREL = {
   R: 13,                  // радиус бочки, px
   BLAST: 120,             // радиус взрыва, px
-  DMG_CORE: 260,          // урон вплотную к бочке
-  DMG_EDGE: 40,           // урон на краю взрыва
-  PIERCE: 1,              // бронежилет от огня не спасает, спасает только шлем
+  DMG: 75,                // урон вблизи: полный запас здоровья с одного раза не снять
+  FULL: 60,               // до этого расстояния от края тела урон полный, px
+  DMG_EDGE: 25,           // урон на краю взрыва
+  PIERCE: 1,              // бронежилет врага от огня не спасает, только шлем
   CHAIN: 0.15,            // через сколько взрывается соседняя бочка, с
   NOISE: 900,             // радиус грохота, px
   // Расстановка, в клетках.
   POST_MIN: 1.4,          // ближе — враг стоял бы на самой бочке
-  POST_MAX: 2.0,          // дальше — враг в шлеме мог бы пережить взрыв
+  POST_MAX: 2.0,          // дальше — пост уже на краю взрыва
   SERVED: 6,              // пост в этом радиусе от бочки уже при деле
   SPACING: 2,             // минимум между бочками
   FROM_SPAWN: 6,          // шагов от старта: не у самого входа
   SIGHT_MIN: 4,           // бочку видно с подхода не вплотную…
   SIGHT_MAX: 12,          // …но и не с другого конца карты
-  MIN: 3, MAX: 6,         // сколько бочек на карте
+  MIN: 1, MAX: 2,         // сколько бочек на карте: редкая удача, а не арсенал
 };
 
 /** Расстояние от точки до отрезка. */
@@ -2157,8 +2161,9 @@ function segDist(px, py, ax, ay, bx, by) {
   return dist(px, py, ax + dx * t, ay + dy * t);
 }
 
-/** Урон по расстоянию от бочки до края тела: к краю взрыва слабее. */
-const blastDamage = d => lerp(BARREL.DMG_CORE, BARREL.DMG_EDGE, clamp(d / BARREL.BLAST, 0, 1));
+/** Урон по расстоянию от бочки до края тела: вблизи полный, к краю слабее. */
+const blastDamage = d => (d <= BARREL.FULL ? BARREL.DMG
+  : lerp(BARREL.DMG, BARREL.DMG_EDGE, clamp((d - BARREL.FULL) / (BARREL.BLAST - BARREL.FULL), 0, 1)));
 
 function addBarrel(x, y) {
   const br = { x, y, r: BARREL.R, alive: true, fuse: -1, by: null };
@@ -2166,18 +2171,19 @@ function addBarrel(x, y) {
   return br;
 }
 
-/** Взрыв. Ранит только врагов, и только тех, кого не прикрыла стена или
- *  ящик. Убитые засчитываются тому, кто поджёг: игроку или бойцу отряда. */
+/** Взрыв. Ранит врагов, игрока и отряд — всех, кого не прикрыла стена или
+ *  ящик; заложников не трогает. Убитые враги засчитываются тому, кто поджёг:
+ *  игроку или бойцу отряда. Броня и щит своих принимают взрыв, как пулю. */
 function explodeBarrel(br) {
   if (!br.alive) return;
   br.alive = false;
   const { x, y } = br;
-  for (const b of bots) {
-    if (!b.alive) continue;
-    const d = Math.max(0, dist(b.x, b.y, x, y) - b.r);
-    if (d > BARREL.BLAST || !lineClear(x, y, b.x, b.y)) continue;
-    applyDamage(b, blastDamage(d), BARREL.PIERCE, br.by);
-    if (b.alive) bleed(b.x, b.y, Math.atan2(b.y - y, b.x - x), 1);
+  for (const e of [...bots, ...allies, player]) {
+    if (!e.alive) continue;
+    const d = Math.max(0, dist(e.x, e.y, x, y) - e.r);
+    if (d > BARREL.BLAST || !lineClear(x, y, e.x, e.y)) continue;
+    applyDamage(e, blastDamage(d), BARREL.PIERCE, br.by, br);
+    if (e.alive) bleed(e.x, e.y, Math.atan2(e.y - y, e.x - x), 0.8);
   }
   // Соседняя бочка вспыхивает не сразу: цепочку должно быть видно глазами.
   for (const o of barrels) {
@@ -2307,19 +2313,29 @@ function planBarrels() {
         }
       cands.sort((a, b) => b.s - a.s);
       const pick = cands.find(k => seenFromApproach(k.tx, k.ty, k.c));
-      if (pick) chosen.push(pick.c);
+      if (pick) chosen.push({ x: pick.c.x, y: pick.c.y, s: pick.s });
     }
   };
   pass(true);
   if (chosen.length < BARREL.MIN) pass(false);
-  // Лишние прореживаем равномерно по маршруту: бочки нужны на всём пути,
-  // а не только в первых комнатах. Выбор идёт от старта, поэтому порядок
-  // в chosen — это и есть порядок по маршруту.
+  // Лишние убираем: маршрут делится на MAX равных отрезков, и в каждом
+  // остаётся самая выгодная бочка, а из равных — ближняя к середине отрезка.
+  // Так они и по всему пути, и там, где взрыв заденет больше врагов. Выбор
+  // шёл от старта, поэтому порядок в chosen — это и есть порядок по маршруту.
+  let out = chosen;
   if (chosen.length > BARREL.MAX) {
     const n = chosen.length;
-    return Array.from({ length: BARREL.MAX }, (_, k) => chosen[Math.round(k * (n - 1) / (BARREL.MAX - 1))]);
+    out = Array.from({ length: BARREL.MAX }, (_, k) => {
+      const from = Math.floor(k * n / BARREL.MAX), to = Math.floor((k + 1) * n / BARREL.MAX);
+      const mid = (from + to - 1) / 2;
+      let best = from;
+      for (let i = from + 1; i < to; i++)
+        if (chosen[i].s > chosen[best].s ||
+            (chosen[i].s === chosen[best].s && Math.abs(i - mid) < Math.abs(best - mid))) best = i;
+      return chosen[best];
+    });
   }
-  return chosen;
+  return out.map(({ x, y }) => ({ x, y }));
 }
 
 /** Выстрел. Общий для игрока и ботов: патроны, разброс, отдача, шум. */
@@ -2758,6 +2774,16 @@ class Ally {
       const t = rayCircle(this.x, this.y, dx, dy, h.x, h.y, margin);
       if (Number.isFinite(t) && t > 0 && t < target) return true;
     }
+    // Бочку на линии огня не трогаем, если её взрыв заденет своих — и самого стрелка.
+    const squad = [player, ...allies].filter(o => o.alive);
+    for (const br of barrels) {
+      if (!br.alive) continue;
+      const d = dist(this.x, this.y, br.x, br.y);
+      if (d > target) continue;
+      if (!squad.some(o => dist(o.x, o.y, br.x, br.y) <= BARREL.BLAST + o.r)) continue;
+      const t = rayCircle(this.x, this.y, dx, dy, br.x, br.y, br.r + 4 + d * cone * 1.6);
+      if (Number.isFinite(t) && t < target) return true;
+    }
     return false;
   }
 
@@ -3033,33 +3059,41 @@ function freshIntel(x, y) {
 
 /* ── Приказы ──────────────────────────────────────────────────────────────
    Два режима: авто (строй и самостоятельный бой) и точка удержания.
-   Выделять бойцов можно клавишами 5–8, всех — 9; F ставит приказ следующим
-   кликом по карте, G возвращает весь отряд в авто. */
+   Клавиша бойца (Z X C V) или всех (F) выделяет и сразу ждёт клик по карте:
+   выбрал — кликнул, куда идти. Пока выбор не пуст, клик командует, а не
+   стреляет; Q снимает выбор и возвращает клику выстрел. G — весь отряд в авто. */
 const squadCmd = { pending: false, fireLock: 0 };
 
 const squadSelected = () => allies.filter(a => a.selected && !a.down);
+
+/** Есть кого вести — ждём клик по карте, нет — клик снова стреляет. */
+function syncSquadOrder() {
+  const was = squadCmd.pending;
+  squadCmd.pending = squadSelected().length > 0;
+  if (squadCmd.pending && !was) Audio2D.ui(true);
+}
 
 function selectAlly(i, only = true) {
   const a = allies[i];
   if (!a) return;
   if (only) for (const o of allies) o.selected = false;
   a.selected = !only ? !a.selected : true;
-  squadCmd.pending = false;
+  syncSquadOrder();
 }
 
 function selectAllAllies() {
   const all = allies.filter(a => !a.down);
   const already = all.length && all.every(a => a.selected);
   for (const a of allies) a.selected = !already && !a.down;
-  squadCmd.pending = false;
+  syncSquadOrder();
 }
 
-/** F — ждём клик по карте. Если никто не выделен, приказ получает весь отряд. */
-function beginSquadOrder() {
-  if (!allies.some(a => !a.down)) return;
-  if (!squadSelected().length) selectAllAllies();
-  squadCmd.pending = true;
-  Audio2D.ui(true);
+/** Q — снять выбор и играть самому. Уже отданные приказы остаются в силе. */
+function cancelSquadSelection() {
+  const had = squadCmd.pending || allies.some(a => a.selected);
+  for (const a of allies) a.selected = false;
+  squadCmd.pending = false;
+  if (had) Audio2D.ui(false);
 }
 
 function placeSquadOrder(x, y) {
@@ -3091,6 +3125,8 @@ function updateSquad(dt) {
   // Разведкой делятся только сильные: средним она ни к чему, а лучи не бесплатны.
   if (squadStrong()) updateSquadIntel(dt); else if (squadIntel.length) squadIntel = [];
   for (const a of allies) a.update(dt);
+  // Выбранные выбыли — ждать клик не для кого, а клик не должен залипнуть без выстрела.
+  if (squadCmd.pending && !squadSelected().length) squadCmd.pending = false;
   if (squadCmd.pending && mouse.clicked) {
     const m = mouseWorld();
     placeSquadOrder(m.x, m.y);
@@ -3404,10 +3440,11 @@ window.addEventListener('keydown', e => {
   if (k === 'e' || k === 'у') useAction();
   // Отряд. Клавиши настраиваются; с Shift выбор не сбрасывается, а копится:
   // зажал Shift, нажал две клавиши — выбраны оба бойца.
+  // Выбор сразу ждёт клик по карте; отмена возвращает клику выстрел.
   for (let i = 0; i < 4; i++)
     if (keyMatches(squadKey('ally' + (i + 1)), k)) selectAlly(i, !e.shiftKey);
   if (keyMatches(squadKey('all'), k)) selectAllAllies();
-  if (keyMatches(squadKey('order'), k)) beginSquadOrder();
+  if (keyMatches(squadKey('cancel'), k)) cancelSquadSelection();
   if (keyMatches(squadKey('auto'), k)) squadAuto();
   if (k === '`' || k === 'ё' || k === '~') state.debug = !state.debug;
   if (k === 'm' || k === 'ь') state.sheet = !state.sheet;
@@ -5402,30 +5439,18 @@ function drawProjectilesAndFx() {
 }
 
 
-/** Красная бочка сверху: крышка с ободом, пробка и жёлтое кольцо-предупреждение —
- *  чтобы не спутать с ржавыми бочками-декором, лежащими на боку. */
+/** Красная бочка сверху: целиком красная, с яркой красной обводкой —
+ *  не спутать с ржавыми бочками-декором, лежащими на боку. */
 function drawBarrels() {
   for (const br of barrels) {
     if (!br.alive) continue;
     const { x, y, r } = br;
     ctx.fillStyle = 'rgba(0,0,0,.38)';
     ctx.beginPath(); ctx.ellipse(x + 3, y + 4, r + 1, r * 0.92, 0, 0, TAU); ctx.fill();
-    const g = ctx.createRadialGradient(x - r * 0.35, y - r * 0.4, r * 0.1, x, y, r);
-    g.addColorStop(0, '#ff7564'); g.addColorStop(0.55, '#d42a1d'); g.addColorStop(1, '#8a140e');
-    ctx.fillStyle = g;
+    ctx.fillStyle = '#d0231a';
     ctx.beginPath(); ctx.arc(x, y, r, 0, TAU); ctx.fill();
-    ctx.strokeStyle = '#5a0c08'; ctx.lineWidth = 1.6;
-    ctx.beginPath(); ctx.arc(x, y, r - 0.8, 0, TAU); ctx.stroke();
-    // Кольцо-предупреждение: жёлтое с чёрными насечками.
-    ctx.strokeStyle = '#ffc93c'; ctx.lineWidth = 2.4;
-    ctx.beginPath(); ctx.arc(x, y, r * 0.66, 0, TAU); ctx.stroke();
-    ctx.strokeStyle = '#1a1410'; ctx.lineWidth = 2.6;
-    for (let k = 0; k < 6; k++) {
-      const a = k * TAU / 6 + 0.3;
-      ctx.beginPath(); ctx.arc(x, y, r * 0.66, a, a + 0.32); ctx.stroke();
-    }
-    ctx.fillStyle = '#7a7f86';                                   // пробка
-    ctx.beginPath(); ctx.arc(x + r * 0.28, y - r * 0.26, 2.2, 0, TAU); ctx.fill();
+    ctx.strokeStyle = '#ff3b30'; ctx.lineWidth = 2.2;
+    ctx.beginPath(); ctx.arc(x, y, r - 1.1, 0, TAU); ctx.stroke();
     // Подожжённая цепочкой — горит, пока не рванёт.
     if (br.fuse >= 0) {
       ctx.globalCompositeOperation = 'lighter';
@@ -5784,7 +5809,7 @@ function drawSquadPanel() {
   const bw = (w - 28) / 3;
   const buttons = [
     [`ВСЕ · ${keyLabel(squadKey('all'))}`, selectAllAllies, allies.some(a => a.selected)],
-    [`ПРИКАЗ · ${keyLabel(squadKey('order'))}`, beginSquadOrder, squadCmd.pending],
+    [`ОТМЕНА · ${keyLabel(squadKey('cancel'))}`, cancelSquadSelection, false],
     [`АВТО · ${keyLabel(squadKey('auto'))}`, squadAuto, allies.every(a => !a.order)],
   ];
   buttons.forEach(([label, act, on], i) => {
@@ -5952,7 +5977,19 @@ function drawCrosshair() {
   ctx.stroke();
   ctx.fillStyle = 'rgba(255,255,255,.9)';
   ctx.fillRect(x - 1, y - 1, 2, 2);
+  // Отряд ждёт приказ: подсказка у самого прицела — туда игрок и смотрит.
+  if (squadCmd.pending) {
+    ctx.font = '600 11px ui-monospace, Menlo, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.fillText(squadOrderHint(), x + 1, y + gap + len + 17);
+    ctx.fillStyle = '#ffc857';
+    ctx.fillText(squadOrderHint(), x, y + gap + len + 16);
+  }
 }
+
+/** Что сказать у прицела, пока отряд ждёт приказ. */
+const squadOrderHint = () => `клик — на позицию · ${keyLabel(squadKey('cancel'))} — отмена`;
 
 function drawOverlays() {
   if (player.lastHurt > 0 && player.alive) {
@@ -6550,16 +6587,19 @@ const latinKey = k => KEY_LAYOUT[k] || k;
 /** Совпадает ли нажатая клавиша с назначенной — в любой раскладке. */
 const keyMatches = (bound, pressed) => !!bound && latinKey(bound) === latinKey(pressed);
 
+// Бойцы — на нижнем ряду под левой рукой: палец не уходит с WASD далеко.
 const SQUAD_KEYS = [
-  { id: 'ally1', name: 'Первый боец',  def: '5' },
-  { id: 'ally2', name: 'Второй боец',  def: '6' },
-  { id: 'ally3', name: 'Третий боец',  def: '7' },
-  { id: 'ally4', name: 'Четвёртый боец', def: '8' },
-  { id: 'all',   name: 'Выделить всех', def: '9' },
-  { id: 'order', name: 'Приказ по клику', def: 'f' },
-  { id: 'auto',  name: 'Вернуть в авто', def: 'g' },
+  { id: 'ally1',  name: 'Первый боец',    def: 'z' },
+  { id: 'ally2',  name: 'Второй боец',    def: 'x' },
+  { id: 'ally3',  name: 'Третий боец',    def: 'c' },
+  { id: 'ally4',  name: 'Четвёртый боец', def: 'v' },
+  { id: 'all',    name: 'Выделить всех',  def: 'f' },
+  { id: 'cancel', name: 'Снять выбор',    def: 'q' },
+  { id: 'auto',   name: 'Вернуть в авто', def: 'g' },
 ];
 const defaultSquadKeys = () => Object.fromEntries(SQUAD_KEYS.map(k => [k.id, k.def]));
+// Раскладка по умолчанию до 1.4.2. Кто её не менял, получает новую: он её не выбирал.
+const OLD_DEFAULT_KEYS = { ally1: '5', ally2: '6', ally3: '7', ally4: '8', all: '9', order: 'f', auto: 'g' };
 progress.settings.squadKeys = defaultSquadKeys();   // раскладка по умолчанию до загрузки
 // Настройки могли прийти из чужого сохранения без раскладки — не падаем.
 const squadKey = id => (progress.settings.squadKeys || {})[id] || '';
@@ -6744,7 +6784,9 @@ function loadProgress() {
       // Раскладка: сначала то, что игрок назначил сам, потом свободные умолчания.
       // Занятое управлением, повторы и небуквенный мусор отбрасываются молча.
       const saved = data.settings.squadKeys;
-      if (saved && typeof saved === 'object') {
+      const untouched = saved && typeof saved === 'object' &&
+        Object.entries(OLD_DEFAULT_KEYS).every(([id, key]) => saved[id] === key);
+      if (saved && typeof saved === 'object' && !untouched) {
         const out = {}, used = new Set();
         for (const k of SQUAD_KEYS) {
           const key = String(saved[k.id] || '').toLowerCase();
@@ -7352,7 +7394,7 @@ function renderKeyOptions(list) {
   const foot = node('div', 'opt-row');
   const reset = node('button', 'opt-btn');
   reset.appendChild(node('b', null, 'Сбросить раскладку'));
-  reset.appendChild(node('span', null, 'вернуть 5–8, 9, F и G'));
+  reset.appendChild(node('span', null, 'вернуть Z X C V, F, Q и G'));
   reset.dataset.value = 'reset';
   reset.onclick = () => { resetSquadKeys(); keyNote = 'Раскладка сброшена.'; renderSettings(); syncKeyHints(); };
   foot.appendChild(reset);
@@ -7368,7 +7410,7 @@ function syncKeyHints() {
   for (const id of ['hintSquadKeys', 'hintSquadKeys2'])
     if ($(id)) $(id).textContent = seq;
   for (const [id, bind] of [['hintAllKey', 'all'], ['hintAllKey2', 'all'],
-                            ['hintOrderKey', 'order'], ['hintOrderKey2', 'order'],
+                            ['hintCancelKey', 'cancel'], ['hintCancelKey2', 'cancel'],
                             ['hintAutoKey', 'auto'], ['hintAutoKey2', 'auto']])
     if ($(id)) $(id).textContent = keyLabel(squadKey(bind));
 }

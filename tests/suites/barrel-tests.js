@@ -65,17 +65,19 @@ function enemyAt(p, { armor = 0, helmet = false } = {}) {
   const a = openArea(9);
   const c = at(a.tx + 4, a.ty + 4);
   const br = addBarrel(c.x, c.y);
-  // Ближний — в бронежилете и шлеме: взрыв обязан снять и его.
-  const close = enemyAt({ x: c.x + 1.5 * T, y: c.y }, { armor: CFG.ARMOR_MAX, helmet: true });
+  const close = enemyAt({ x: c.x + 1.5 * T, y: c.y });
+  const vest = enemyAt({ x: c.x - 1.5 * T, y: c.y }, { armor: CFG.ARMOR_MAX });
   const edge = enemyAt({ x: c.x, y: c.y + 2.7 * T });
-  const far = enemyAt({ x: c.x - 3.6 * T, y: c.y });
+  const far = enemyAt({ x: c.x - 3.6 * T, y: c.y + T });
   br.by = player;
   explodeBarrel(br);
-  say(!close.alive, 'враг в полутора клетках гибнет даже в бронежилете и шлеме');
-  say(edge.alive && edge.hp < CFG.BOT_HP, 'враг у края взрыва ранен, но жив');
+  say(close.alive && Math.abs(close.hp - (CFG.BOT_HP - BARREL.DMG)) < 1e-6,
+      `с одного взрыва не убивает: враг рядом теряет ${BARREL.DMG} и жив`);
+  say(vest.alive && Math.abs(vest.hp - close.hp) < 1e-6, 'бронежилет врага от взрыва не спасает');
+  say(edge.alive && edge.hp > close.hp && edge.hp < CFG.BOT_HP, 'враг у края взрыва ранен слабее');
   say(far.alive && far.hp === CFG.BOT_HP, 'враг за радиусом взрыва цел');
-  say(blastDamage(0) > blastDamage(BARREL.BLAST / 2) && blastDamage(BARREL.BLAST / 2) > blastDamage(BARREL.BLAST),
-      'урон падает к краю взрыва');
+  say(blastDamage(0) === BARREL.DMG && blastDamage(BARREL.BLAST) < blastDamage(BARREL.BLAST * 0.75)
+      && blastDamage(BARREL.BLAST * 0.75) < BARREL.DMG, 'вблизи полный урон, к краю взрыва слабее');
 }
 
 // ── Стена гасит взрыв ─────────────────────────────────────────────────────
@@ -96,24 +98,64 @@ function enemyAt(p, { armor = 0, helmet = false } = {}) {
   say(behind.alive && behind.hp === CFG.BOT_HP, 'враг за стеной в двух клетках цел');
 }
 
-// ── Своих взрыв не трогает ────────────────────────────────────────────────
+// ── Взрыв бьёт и по своим ─────────────────────────────────────────────────
 {
   arena([['assault', 1]]);
   const a = openArea(9);
   const c = at(a.tx + 4, a.ty + 4);
-  const br = addBarrel(c.x, c.y);
-  player.x = c.x + T; player.y = c.y; player.hp = 100;
+  let br = addBarrel(c.x, c.y);
+  player.x = c.x + T; player.y = c.y; player.hp = 100; player.armor = 0;
   const ally = allies[0];
-  ally.x = c.x - T; ally.y = c.y;
+  ally.x = c.x - T; ally.y = c.y; ally.armor = 0;
   const allyHp = ally.hp;
   const h = hostages[0];
   h.alive = true; h.rescued = false; h.hp = CFG.HOSTAGE_HP;
   h.x = c.x; h.y = c.y + T;
   br.by = player;
   explodeBarrel(br);
-  say(player.alive && player.hp === 100, 'игрок рядом со взрывом цел');
-  say(ally.alive && ally.hp === allyHp, 'боец отряда рядом со взрывом цел');
-  say(h.alive && h.hp === CFG.HOSTAGE_HP, 'заложник рядом со взрывом цел');
+  say(player.alive && Math.abs(player.hp - (100 - BARREL.DMG)) < 1e-6, `игрок рядом со взрывом теряет ${BARREL.DMG}`);
+  say(Math.abs(ally.hp - (allyHp - BARREL.DMG)) < 1e-6, 'боец отряда рядом со взрывом — тоже');
+  say(h.alive && h.hp === CFG.HOSTAGE_HP, 'заложника взрыв не трогает');
+
+  // Бронежилет игрока гасит взрыв так же, как пулю.
+  br = addBarrel(c.x, c.y);
+  player.hp = 100; player.armor = 100;
+  br.by = player;
+  explodeBarrel(br);
+  say(player.hp === 100 && Math.abs(player.armor - (100 - BARREL.DMG)) < 1e-6, 'бронежилет игрока принимает взрыв на себя');
+}
+
+// ── Щит принимает взрыв спереди ───────────────────────────────────────────
+{
+  arena([['shield', 1]]);
+  const a = openArea(9);
+  const c = at(a.tx + 4, a.ty + 4);
+  const br = addBarrel(c.x, c.y);
+  const sh = allies[0];
+  sh.x = c.x + T; sh.y = c.y; sh.ang = Math.PI;           // смотрит на бочку
+  player.x = c.x - 4 * T; player.y = c.y + 3 * T;        // поджёг сбоку, не спереди щита
+  const hp0 = sh.hp, shield0 = sh.shield;
+  br.by = player;
+  explodeBarrel(br);
+  say(sh.hp === hp0 && sh.shield < shield0, 'щитоносец лицом к бочке принимает взрыв щитом');
+}
+
+// ── Напарник не поджигает бочку рядом со своими ───────────────────────────
+{
+  arena([['assault', 1]]);
+  const a = openArea(9);
+  const c = at(a.tx + 4, a.ty + 4);
+  const ally = allies[0];
+  ally.x = c.x - 4 * T; ally.y = c.y;
+  const foe = enemyAt({ x: c.x + 3 * T, y: c.y });
+  player.x = c.x + T; player.y = c.y + 2.5 * T;          // в зоне взрыва, но в стороне от линии огня
+  say(!ally.lineBlocked(foe.x, foe.y), 'без бочки игрок линию огня не перекрывает');
+  addBarrel(c.x, c.y);                                   // бочка на линии огня
+  say(ally.lineBlocked(foe.x, foe.y), 'бочка на линии огня, игрок в зоне её взрыва — напарник не стреляет');
+  player.x = c.x - 3 * T; player.y = c.y + 4 * T;
+  say(!ally.lineBlocked(foe.x, foe.y), 'свои далеко от бочки — стреляет');
+  ally.x = c.x - 1.5 * T; ally.y = c.y + T;              // сам у бочки
+  say(ally.lineBlocked(foe.x, foe.y), 'и не стреляет через бочку, у которой стоит сам');
 }
 
 // ── Цепочка ───────────────────────────────────────────────────────────────
@@ -140,16 +182,19 @@ function enemyAt(p, { armor = 0, helmet = false } = {}) {
   const a = openArea(9);
   const c = at(a.tx + 4, a.ty + 4);
   let br = addBarrel(c.x, c.y);
-  enemyAt({ x: c.x + T, y: c.y });
-  enemyAt({ x: c.x, y: c.y + T });
+  // Взрыв добивает раненых; целый враг его переживает.
+  enemyAt({ x: c.x + T, y: c.y }).hp = 50;
+  enemyAt({ x: c.x, y: c.y + T }).hp = 50;
+  const whole = enemyAt({ x: c.x, y: c.y - T });
   const money0 = progress.money, kills0 = player.kills;
   player.x = c.x - 4 * T; player.y = c.y;
   hitscan(player.x, player.y, 0, playerWeapon('usp'), player);
-  say(player.kills === kills0 + 2, 'двое убитых взрывом засчитаны игроку');
+  say(player.kills === kills0 + 2 && whole.alive, 'двое добитых взрывом засчитаны игроку, целый враг жив');
   say(progress.money === money0 + 2 * CFG.PAY_KILL, 'и оплачены как обычные ликвидации');
 
+  whole.alive = false;
   br = addBarrel(c.x, c.y);
-  enemyAt({ x: c.x + T, y: c.y });
+  enemyAt({ x: c.x + T, y: c.y }).hp = 50;
   const ally = allies[0];
   ally.x = c.x; ally.y = c.y - 4 * T;
   const squad0 = player.squadKills;
@@ -276,7 +321,7 @@ function enemyAt(p, { armor = 0, helmet = false } = {}) {
     // Бочки на всём пути, а не только в первых комнатах.
     const far = Math.max(...ENEMY_POSTS.map(p => fromSpawn[gi(Math.floor(p.at.x / T), Math.floor(p.at.y / T))]));
     const last = Math.max(...spots.map(s => fromSpawn[gi(Math.floor(s.x / T), Math.floor(s.y / T))]));
-    if (last < far * 0.7) fail('и в дальней части уровня', `${name}: ${last} из ${far}`);
+    if (last < far * 0.5) fail('и в дальней части уровня', `${name}: ${last} из ${far}`);
     for (let a = 0; a < spots.length; a++)
       for (let b = a + 1; b < spots.length; b++)
         if (dist(spots[a].x, spots[a].y, spots[b].x, spots[b].y) < BARREL.SPACING * T - 1) fail('расстояние между бочками', name);
@@ -292,7 +337,7 @@ function enemyAt(p, { armor = 0, helmet = false } = {}) {
   console.log(`  бочек на ${LEVELS_TO_CHECK} уровнях: ${total}`);
 }
 
-// ── Бочка помогает: каждая снимает хотя бы одного врага на посту ──────────
+// ── Бочка помогает: каждая сильно ранит хотя бы одного врага на посту ─────
 {
   const weak = [];
   for (const i of [0, 1, 2, 5, 11, 17, 24]) {
@@ -308,10 +353,10 @@ function enemyAt(p, { armor = 0, helmet = false } = {}) {
       const br = barrels[k];
       br.by = player;
       explodeBarrel(br);
-      if (bots.every(b => b.alive)) weak.push(`${MAP_NAME} (${Math.floor(br.x / T)},${Math.floor(br.y / T)})`);
+      if (!bots.some(b => !b.alive || b.hp <= CFG.BOT_HP - 50)) weak.push(`${MAP_NAME} (${Math.floor(br.x / T)},${Math.floor(br.y / T)})`);
     }
   }
-  say(!weak.length, 'каждая бочка снимает хотя бы одного врага на посту' + (weak.length ? ` — ${weak.join('; ')}` : ''));
+  say(!weak.length, 'каждая бочка снимает с врага на посту не меньше 50 здоровья' + (weak.length ? ` — ${weak.join('; ')}` : ''));
 }
 
 // ── Рисование и панель разработчика ───────────────────────────────────────

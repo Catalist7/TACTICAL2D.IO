@@ -114,20 +114,22 @@ function squadOf(list) {
 // ── Клавиши отряда ────────────────────────────────────────────────────────
 {
   resetSquadKeys();
-  say(SQUAD_KEYS.length === 7, 'настраиваются семь клавиш: четыре бойца, все, приказ, авто');
-  say(SQUAD_KEYS.map(k => k.def).join(' ') === '5 6 7 8 9 f g', 'раскладка по умолчанию 5–8, 9, F, G');
-  say(keyMatches(squadKey('order'), 'а'), 'русская «А» работает как F — раскладку клавиатуры учитываем');
-  say(keyLabel(squadKey('ally1')) === '5' && keyLabel('') === '—', 'клавиша подписывается, пустая — прочерком');
+  say(SQUAD_KEYS.map(k => k.id).join() === 'ally1,ally2,ally3,ally4,all,cancel,auto',
+      'настраиваются семь клавиш: четыре бойца, все, отмена, авто');
+  say(SQUAD_KEYS.map(k => k.def).join(' ') === 'z x c v f q g', 'раскладка по умолчанию Z X C V, F, Q, G');
+  say(keyMatches(squadKey('all'), 'а') && keyMatches(squadKey('cancel'), 'й'),
+      'русские «А» и «Й» работают как F и Q — раскладку клавиатуры учитываем');
+  say(keyLabel(squadKey('ally1')) === 'Z' && keyLabel('') === '—', 'клавиша подписывается, пустая — прочерком');
 
-  say(bindSquadKey('ally1', 'z') === null && squadKey('ally1') === 'z', 'клавишу бойца можно переназначить');
-  say(bindSquadKey('ally2', 'w') !== null && squadKey('ally2') === '6',
+  say(bindSquadKey('ally1', 'b') === null && squadKey('ally1') === 'b', 'клавишу бойца можно переназначить');
+  say(bindSquadKey('ally2', 'w') !== null && squadKey('ally2') === 'x',
       'занятую управлением клавишу не назначить');
   say(bindSquadKey('ally2', 'r') !== null, 'перезарядку тоже не отдадим');
   say(bindSquadKey('нетакой', 'z') !== null, 'неизвестный пункт отклоняется');
 
   // Занятая своим же пунктом клавиша меняется местами.
-  bindSquadKey('ally2', 'z');
-  say(squadKey('ally2') === 'z' && squadKey('ally1') === '6',
+  bindSquadKey('ally2', 'b');
+  say(squadKey('ally2') === 'b' && squadKey('ally1') === 'x',
       'клавиша, занятая другим бойцом, меняется местами, а не дублируется');
   say(new Set(SQUAD_KEYS.map(k => squadKey(k.id))).size === SQUAD_KEYS.length,
       'двух пунктов на одной клавише не бывает');
@@ -136,10 +138,10 @@ function squadOf(list) {
   saveProgress();
   progress.settings.squadKeys = null;
   loadProgress();
-  say(squadKey('ally2') === 'z', 'раскладка переживает перезагрузку');
+  say(squadKey('ally2') === 'b', 'раскладка переживает перезагрузку');
 
   localStorage.setItem(PROGRESS_KEY, JSON.stringify({ completed: 3, settings: { squadKeys: {
-    ally1: 'w', ally2: 'z', ally3: 'z', ally4: 'щщщ', all: 5, order: '', auto: 'x' } } }));
+    ally1: 'w', ally2: 'z', ally3: 'z', ally4: 'щщщ', all: 5, cancel: '', auto: 'x' } } }));
   loadProgress();
   const keys = SQUAD_KEYS.map(k => squadKey(k.id));
   say(squadKey('ally1') !== 'w', 'из сохранения занятая управлением клавиша не проходит');
@@ -157,21 +159,22 @@ function squadOf(list) {
   keyBox().keyButtons.ally1.onclick();
   say(keyCapture && keyCapture.id === 'ally1', 'кнопка ждёт нажатия');
   captureSquadKey('escape');
-  say(!keyCapture && squadKey('ally1') === '5', 'Esc отменяет назначение');
+  say(!keyCapture && squadKey('ally1') === 'z', 'Esc отменяет назначение');
   keyBox().keyButtons.ally1.onclick();
-  captureSquadKey('z');
-  say(!keyCapture && squadKey('ally1') === 'z', 'нажатая клавиша назначилась');
+  captureSquadKey('b');
+  say(!keyCapture && squadKey('ally1') === 'b', 'нажатая клавиша назначилась');
   keyBox().resetButton.onclick();
-  say(squadKey('ally1') === '5' && squadKey('order') === 'f', 'кнопка сброса возвращает раскладку');
+  say(squadKey('ally1') === 'z' && squadKey('all') === 'f' && squadKey('cancel') === 'q',
+      'кнопка сброса возвращает раскладку');
   showScreen('menuScreen');
 
   // Подсказки и панель подписаны текущими клавишами.
-  bindSquadKey('ally1', 'z');
+  bindSquadKey('ally1', 'b');
   syncKeyHints();
-  say($('hintSquadKeys').textContent.startsWith('Z'), 'подсказка в списке управления обновилась');
-  bindSquadKey('order', 'x');
+  say($('hintSquadKeys').textContent.startsWith('B'), 'подсказка в списке управления обновилась');
+  bindSquadKey('cancel', 'n');
   syncKeyHints();
-  say($('hintOrderKey').textContent === 'X', 'и подпись приказа тоже');
+  say($('hintCancelKey').textContent === 'N' && $('hintCancelKey2').textContent === 'N', 'и подпись отмены тоже');
   resetSquadKeys();
   syncKeyHints();
 }
@@ -185,24 +188,24 @@ function squadOf(list) {
     for (let i = 0; i < 4; i++) if (keyMatches(squadKey('ally' + (i + 1)), key)) selectAlly(i, !shift);
   };
 
-  press('5');
+  press('z');
   say(squad[0].selected && squadSelected().length === 1, 'клавиша первого бойца выделяет его одного');
-  press('6');
+  press('x');
   say(squad[1].selected && !squad[0].selected, 'без Shift выбор переходит ко второму');
 
-  press('5', true);
-  press('7', true);
+  press('z', true);
+  press('c', true);
   say(squad[1].selected && squad[0].selected && squad[2].selected && squadSelected().length === 3,
       'с Shift выбор копится: нажали две клавиши — выбраны все трое');
 
-  press('7', true);
+  press('c', true);
   say(!squad[2].selected && squadSelected().length === 2, 'повторное нажатие с Shift снимает бойца');
 
-  press('8');
+  press('v');
   say(squadSelected().length === 1 && squad[3].selected, 'без Shift выбор снова одиночный');
 
   // Приказ достаётся всем выделенным.
-  press('5', true);
+  press('z', true);
   const chosen = squadSelected();
   say(chosen.length === 2, 'двое выделены');
   placeSquadOrder(player.x + 60, player.y);
@@ -211,12 +214,83 @@ function squadOf(list) {
   squadAuto();
 
   // Переназначенная клавиша работает, старая — нет.
-  bindSquadKey('ally1', 'z');
-  press('z');
+  bindSquadKey('ally1', 'b');
+  press('b');
   say(squad[0].selected, 'новая клавиша выбирает бойца');
   squad.forEach(a => { a.selected = false; });
-  press('5');
+  press('z');
   say(!squad[0].selected, 'старая больше не работает');
+  resetSquadKeys();
+}
+
+// ── Выбор сразу ждёт клик, Q возвращает управление игроку ─────────────────
+{
+  resetSquadKeys();
+  progress.completed = 8;
+  const squad = squadOf([['assault', 1], ['medic', 1], ['shield', 1], ['assault', 1]]);
+  const mouse0 = { x: mouse.x, y: mouse.y };          // курсор вернём: по нему смотрит игрок
+  const key = (k, shift = false) => {
+    const e = { key: k, ctrlKey: false, shiftKey: shift, altKey: false, metaKey: false, preventDefault() {} };
+    for (const fn of __listeners.window.keydown || []) fn(e);
+    for (const fn of __listeners.window.keyup || []) fn({ key: k });
+  };
+  const clickAt = (x, y) => {
+    mouse.x = (x - camera.x) * zoom(); mouse.y = (y - camera.y) * zoom();
+    mouse.clicked = true;
+    updateWorld(DT);
+    mouse.clicked = false;
+  };
+
+  key('z');
+  say(squad[0].selected && squadSelected().length === 1, 'Z выбирает первого бойца');
+  say(squadCmd.pending, 'и сразу ждёт клик по карте');
+  clickAt(player.x + 80, player.y);
+  say(!!squad[0].order && !squadCmd.pending, 'клик отправил бойца на позицию');
+  say(squad.slice(1).every(a => !a.order), 'остальные остались в авто');
+
+  key('x'); key('c', true);
+  say(squad[1].selected && squad[2].selected && squadSelected().length === 2 && squadCmd.pending,
+      'X и Shift+C — выбраны двое, ждём клик');
+  key('q');
+  say(!squadSelected().length && !squadCmd.pending, 'Q снимает выбор и отменяет приказ');
+  say(!!squad[0].order, 'уже отданный приказ Q не отменяет');
+  step(30);                                           // клик по приказу недолго глушит выстрел
+  const shots0 = tracers.length;
+  player.active = 'pistol';
+  clickAt(player.x + 200, player.y);
+  say(squad.every(a => !a.order || a === squad[0]) && tracers.length > shots0,
+      'после Q клик снова стреляет, а не командует');
+
+  key('f');
+  say(squadSelected().length === 4 && squadCmd.pending, 'F выделяет весь отряд и ждёт клик');
+  key('й');
+  say(!squadSelected().length && !squadCmd.pending, 'русская «Й» работает как Q');
+
+  // Выбранный боец упал — ждать клик больше не для кого, стрельба не должна залипнуть.
+  key('v');
+  squad[3].down = true; squad[3].alive = false;
+  updateWorld(DT);
+  say(!squadCmd.pending, 'выбранный боец выбыл — режим приказа снят сам');
+
+  key('5');
+  say(!squadSelected().length, 'старая клавиша 5 больше ничего не выбирает');
+  key('g');
+  say(squad.every(a => !a.order), 'G по-прежнему возвращает отряд в авто');
+  mouse.x = mouse0.x; mouse.y = mouse0.y;
+}
+
+// ── Старая раскладка по умолчанию переходит на новую ──────────────────────
+{
+  localStorage.setItem(PROGRESS_KEY, JSON.stringify({ completed: 3, settings: { squadKeys: {
+    ally1: '5', ally2: '6', ally3: '7', ally4: '8', all: '9', order: 'f', auto: 'g' } } }));
+  loadProgress();
+  say(SQUAD_KEYS.every(k => squadKey(k.id) === k.def), 'нетронутая раскладка 5–8, 9, F, G стала новой');
+  localStorage.setItem(PROGRESS_KEY, JSON.stringify({ completed: 3, settings: { squadKeys: {
+    ally1: '5', ally2: '6', ally3: '7', ally4: '8', all: '9', order: 'f', auto: 'h' } } }));
+  loadProgress();
+  say(squadKey('ally1') === '5' && squadKey('auto') === 'h' && squadKey('all') === '9',
+      'свою раскладку игрок не теряет');
+  say(squadKey('cancel') === 'q', 'новая клавиша отмены встаёт по умолчанию, если свободна');
   resetSquadKeys();
 }
 
