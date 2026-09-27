@@ -102,12 +102,9 @@
   .arsenal{display:grid;grid-template-columns:320px 1fr;gap:0}
   .arsenal-figure{padding:18px;border-right:1px solid var(--line);display:flex;
     flex-direction:column;align-items:center;gap:14px}
-  .cc-3d{display:block;width:100%;height:auto;aspect-ratio:520/192;border-radius:8px;margin-bottom:8px;
-    background:#070b11;border:1px solid var(--line)}
   .cc-photo{display:block;width:100%;aspect-ratio:520/192;object-fit:contain;border-radius:8px;margin-bottom:8px;
     padding:6px 10px;box-sizing:border-box;border:1px solid var(--line);
     background:radial-gradient(ellipse at 50% 55%,#2a3442 0%,#131a24 60%,#0b1017 100%)}
-  .arsenal-real{width:300px;height:400px;border-radius:12px;touch-action:none;cursor:grab;border:1px solid var(--line);display:block}
   #arsenalCanvas{width:300px;height:400px;border-radius:12px;touch-action:none;
     background:radial-gradient(ellipse at 50% 62%,#16202e 0%,#0b1017 70%);
     border:1px solid var(--line)}
@@ -405,7 +402,7 @@
 /* ═══════════════════════════════════════════════════════════════════════════
    CONFIG — весь баланс собран здесь. Меняй числа, не трогая логику.
    ═══════════════════════════════════════════════════════════════════════════ */
-const GAME_VERSION = '1.5.0';   // показывается в главном меню; см. CHANGELOG.md
+const GAME_VERSION = '1.5.1';   // показывается в главном меню; см. CHANGELOG.md
 
 const CFG = {
   TILE: 40,
@@ -7203,8 +7200,6 @@ function renderArsenal() {
 
   const cat = $('arsenalCatalog');
   cat.innerHTML = '';
-  ARS3D.cards = [];
-  const with3D = !!arsenal3D();
   const current = CATALOG.find(t => t.tab === arsenalTab);
   if (current.ids) {
     for (const id of current.ids) {
@@ -7233,7 +7228,8 @@ function renderArsenal() {
         card.actionButton.classList.add('pulse');
       }
       // Трёхмерное превью ствола — над названием.
-      const pv = !card.insertBefore ? null : weaponPhoto(id) || (with3D ? gunPreviewCanvas(id) : null);
+      // Фотография ствола — над названием.
+      const pv = card.insertBefore ? weaponPhoto(id) : null;
       if (pv) card.insertBefore(pv, card.firstChild);
       cat.appendChild(card);
     }
@@ -7480,24 +7476,20 @@ const squadOpen = () => $('squadScreen').classList.contains('show');
 let arsenalCtx = null;
 
 /* ── Боец в арсенале ──────────────────────────────────────────────────────
-   Лицом к игроку, в полный рост. Рисуется кодом, как и всё в игре, но это
-   не модель из боя, а отдельный портрет: в бою видна только макушка, здесь
-   видно, что куплено. Надетая броня меняет жилет и голову, основной ствол —
-   в руках поперёк корпуса, пистолет — в кобуре на бедре, нож — на жилете.
-   Координаты — в точках холста 300×400, ноль по вертикали — подошвы. */
+   Плоский векторный рисунок в полный рост: тёмно-синее снаряжение с жирной
+   обводкой, оливковый пол с гильзами. Координаты — в системе исходного
+   эскиза 680×720; холст 300×400 показывает его середину. От надетой брони
+   меняются жилет, голова и оптика, от купленного ствола — оружие в руках. */
 const FIGURE = {
   W: 300, H: 400,
-  GROUND: 360,              // где подошвы, от верха холста
-  GUN_S: 4.6,               // масштаб силуэта ствола: из точек боя в точки портрета
-  PISTOL_S: 2.7,
-  RIM: '#54a8ff',           // контровой свет сзади справа — он и даёт объём
+  VIEW: { x: 106, y: 56, s: 0.64 },          // какой кусок эскиза попадает в холст и в каком масштабе
   DPR: () => Math.min(window.devicePixelRatio || 1, 2),
 };
 
-/* Линзы ночного видения: [x, y, радиус] от середины глаз. Квадрокуляр —
-   четыре трубки в ряд, крайние смотрят вбок. */
+/* Линзы ночного видения: [x, y, радиус] от середины очков. Квадрокуляр —
+   четыре трубки в ряд, крайние меньше и смотрят вбок. */
 const NVG_LENSES = {
-  nvg4: [[-14.5, 0, 3.6], [-5.2, 0, 4.4], [5.2, 0, 4.4], [14.5, 0, 3.6]],
+  nvg4: [[-21, 0, 6.5], [-7, 0, 8], [7, 0, 8], [21, 0, 6.5]],
 };
 
 /** Что надето — по прогрессу. Отдельно от рисования, чтобы проверять тестом. */
@@ -7518,2494 +7510,500 @@ function figureLook() {
   };
 }
 
-/** Светлее (k > 0) или темнее (k < 0) — для объёма без новых цветов в палитре. */
-function tone(hex, k) {
-  const n = parseInt(hex.slice(1, 7), 16);
-  const to = k < 0 ? 0 : 255, a = Math.min(1, Math.abs(k));
-  const ch = v => Math.round(v + (to - v) * a);
-  const r = ch(n >> 16), g = ch((n >> 8) & 255), b = ch(n & 255);
-  return '#' + ((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1);
-}
+// Палитра эскиза.
+const AG = {
+  ink: '#1c2233', ink2: '#141824', navy: '#34405c', navyD: '#2c3750', navyL: '#3f4c6b', cloth: '#3d4b6e',
+  vest: '#445479', pouch: '#36445f', strap: '#3b4a6b', dark: '#2a3348', darker: '#1f2433', belt: '#2a3143',
+  pad: '#4b5a7e', padHi: '#6a7ca6', helmet: '#4a5a80', gun: '#2a2f3a', gunD: '#252a35', gunM: '#323846',
+  steel: '#9aa3b5', steelD: '#5f687b', skin: '#c49c78', skinD: '#a8825f', blue: '#5b82c0', lens: '#6f8fbf',
+  floor: '#5e6655', grass: '#5f7a5d', brass: '#c9a24a',
+};
 
-function mixHex(a, b, t) {
-  const pa = parseInt(a.slice(1, 7), 16), pb = parseInt(b.slice(1, 7), 16);
-  const ch = sh => Math.round(((pa >> sh) & 255) + ((((pb >> sh) & 255) - ((pa >> sh) & 255)) * t));
-  return '#' + ((1 << 24) | (ch(16) << 16) | (ch(8) << 8) | ch(0)).toString(16).slice(1);
-}
-
-/** Заливка «цилиндра»: край, блик, тон, собственная тень и контровой свет
- *  по дальнему краю. Эти пять полос и делают плоскую фигуру объёмной. */
-function figStops(g, base, k = 1) {
-  g.addColorStop(0, tone(base, 0.04 * k));
-  g.addColorStop(0.22, tone(base, 0.3 * k));
-  g.addColorStop(0.5, base);
-  g.addColorStop(0.8, tone(base, -0.52 * k));
-  g.addColorStop(1, mixHex(tone(base, -0.3), FIGURE.RIM, 0.4 * k));
-  return g;
-}
-
-function figShade(c, x0, x1, base, k = 1) {
-  return figStops(c.createLinearGradient(x0, 0, x1, 0), base, k);
-}
-
-/** Сфера со светом слева сверху: шлем, наколенник, линза. */
-function figSphere(c, cx, cy, r, base) {
-  const g = c.createRadialGradient(cx - r * 0.38, cy - r * 0.42, r * 0.05, cx, cy, r);
-  g.addColorStop(0, tone(base, 0.42));
-  g.addColorStop(0.35, tone(base, 0.08));
-  g.addColorStop(0.78, tone(base, -0.45));
-  g.addColorStop(1, mixHex(tone(base, -0.3), FIGURE.RIM, 0.45));
-  return g;
-}
-
-/** Мягкая тень там, где одно ложится на другое: под жилетом, под шлемом. */
-function figOcclusion(c, x, y, w, h, down = true) {
-  const g = c.createLinearGradient(0, y, 0, y + h);
-  g.addColorStop(down ? 0 : 1, 'rgba(0,0,0,.42)');
-  g.addColorStop(down ? 1 : 0, 'rgba(0,0,0,0)');
-  c.fillStyle = g;
-  c.fillRect(x, y, w, h);
-}
-
-/** Скруглённый прямоугольник на кривых: так он ровно выходит и в снимке кадра. */
-function figRound(c, x, y, w, h, r) {
-  r = Math.min(r, w / 2, h / 2);
-  c.beginPath();
-  c.moveTo(x + r, y);
-  c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r);
-  c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  c.lineTo(x + r, y + h); c.quadraticCurveTo(x, y + h, x, y + h - r);
-  c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y);
-  c.closePath();
-}
-
-function figPoly(c, pts) {
-  c.beginPath();
-  c.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) c.lineTo(pts[i][0], pts[i][1]);
-  c.closePath();
-}
-
-/** Конечность — сужающаяся капсула от точки к точке, свет со стороны, что к свету. */
-function figLimb(c, ax, ay, bx, by, wa, wb, base) {
-  const ang = Math.atan2(by - ay, bx - ax);
-  const nx = -Math.sin(ang), ny = Math.cos(ang);
-  const lit = nx + ny < 0 ? 1 : -1;                 // сторона, смотрящая влево-вверх
-  const mx = (ax + bx) / 2, my = (ay + by) / 2, w = Math.max(wa, wb);
-  c.fillStyle = figStops(c.createLinearGradient(mx + nx * w * lit, my + ny * w * lit,
-                                                mx - nx * w * lit, my - ny * w * lit), base);
-  c.beginPath();
-  c.moveTo(ax + nx * wa, ay + ny * wa);
-  c.lineTo(bx + nx * wb, by + ny * wb);
-  c.arc(bx, by, wb, ang + Math.PI / 2, ang - Math.PI / 2, true);
-  c.lineTo(ax - nx * wa, ay - ny * wa);
-  c.arc(ax, ay, wa, ang - Math.PI / 2, ang + Math.PI / 2, true);
-  c.closePath();
-  c.fill();
-}
-
-/** Складка ткани — тёмный штрих с тонкой светлой кромкой. */
-function figFold(c, x0, y0, cx, cy, x1, y1, base) {
-  c.lineCap = 'round';
-  c.strokeStyle = tone(base, -0.5); c.lineWidth = 1.3;
-  c.beginPath(); c.moveTo(x0, y0); c.quadraticCurveTo(cx, cy, x1, y1); c.stroke();
-  c.strokeStyle = tone(base, 0.22); c.lineWidth = 0.6;
-  c.beginPath(); c.moveTo(x0, y0 - 1.2); c.quadraticCurveTo(cx, cy - 1.2, x1, y1 - 1.2); c.stroke();
-}
-
-/* ── Ноги и ботинки ─────────────────────────────────────────────────────── */
-function figLegs(c, K, look) {
-  const eod = look.armor === 'eod';
-  const cloth = eod ? '#3a4d62' : K.cloth;
-  for (const s of [-1, 1]) {
-    const hip = [s * 17, -152], knee = [s * 19.5, -86], ankle = [s * 21.5, -24];
-    figLimb(c, hip[0], hip[1], knee[0], knee[1], eod ? 21 : 17, eod ? 16 : 12.5, cloth);
-    figLimb(c, knee[0], knee[1], ankle[0], ankle[1], eod ? 15.5 : 12, eod ? 13 : 10, cloth);
-    // Складки: под коленом и гармошкой над ботинком.
-    figFold(c, knee[0] - 9, knee[1] + 14, knee[0], knee[1] + 18, knee[0] + 9, knee[1] + 13, cloth);
-    figFold(c, ankle[0] - 8, ankle[1] - 8, ankle[0], ankle[1] - 4, ankle[0] + 8, ankle[1] - 9, cloth);
-    figFold(c, hip[0] - s * 4, hip[1] + 22, hip[0] + s * 2, hip[1] + 34, hip[0] - s * 1, hip[1] + 48, cloth);
-    if (eod) {
-      // Сапёрные щитки: бедро и голень в толстых пластинах.
-      c.fillStyle = figShade(c, knee[0] - 16, knee[0] + 16, '#51677f');
-      figRound(c, hip[0] - 16, hip[1] + 18, 32, 40, 9); c.fill();
-      figRound(c, knee[0] - 14, knee[1] + 10, 28, 44, 9); c.fill();
-      c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1;
-      for (const y of [hip[1] + 32, hip[1] + 44, knee[1] + 26, knee[1] + 40]) {
-        c.beginPath(); c.moveTo(knee[0] - 12, y); c.lineTo(knee[0] + 12, y); c.stroke();
-      }
-    }
-    // Наколенник: пластик на ремнях.
-    c.fillStyle = K.rig;
-    c.fillRect(knee[0] - 12, knee[1] - 2, 24, 3); c.fillRect(knee[0] - 11, knee[1] + 9, 22, 3);
-    c.fillStyle = figSphere(c, knee[0], knee[1] + 2, 13, '#2a394b');
-    figRound(c, knee[0] - 10, knee[1] - 8, 20, 21, 7); c.fill();
-    c.fillStyle = 'rgba(255,255,255,.2)';
-    c.beginPath(); c.ellipse(knee[0] - 3.5, knee[1] - 3.5, 3.5, 2, -0.5, 0, TAU); c.fill();
-    // Ботинок: голенище, шнуровка, носок, подошва.
-    const bx = ankle[0];
-    c.fillStyle = figShade(c, bx - 12, bx + 12, K.boots);
-    figRound(c, bx - 11.5, -34, 23, 26, 5); c.fill();
+/** Рисовалка в координатах эскиза: прямоугольник, круг, эллипс, путь SVG. */
+function agentPen(c) {
+  const style = (fill, stroke, lw) => {
+    if (fill) { c.fillStyle = fill; c.fill(); }
+    if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw || 2; c.stroke(); }
+  };
+  const round = (x, y, w, h, r) => {
+    r = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2);
     c.beginPath();
-    c.moveTo(bx - 13, -12); c.quadraticCurveTo(bx - 14, -1, bx - 6, -1);
-    c.lineTo(bx + 6, -1); c.quadraticCurveTo(bx + 14, -1, bx + 13, -12);
-    c.quadraticCurveTo(bx, -17, bx - 13, -12); c.fill();
-    c.fillStyle = '#0a0e13';
-    figRound(c, bx - 14, -5, 28, 5.5, 2.5); c.fill();
-    c.fillStyle = '#1c232c';                                              // протектор
-    for (let x = bx - 12; x < bx + 12; x += 4) c.fillRect(x, -2.2, 2.4, 2.2);
-    c.fillStyle = 'rgba(255,255,255,.08)'; c.fillRect(bx - 13, -5, 26, 1);
-    c.strokeStyle = '#3a4656'; c.lineWidth = 0.9;
-    for (let y = -31; y <= -15; y += 4) {
-      c.beginPath(); c.moveTo(bx - 4, y); c.lineTo(bx + 4, y + 2.4); c.stroke();
-      c.beginPath(); c.moveTo(bx + 4, y); c.lineTo(bx - 4, y + 2.4); c.stroke();
-    }
-    c.fillStyle = 'rgba(255,255,255,.12)';
-    c.beginPath(); c.ellipse(bx - 4, -9, 5, 2, 0, 0, TAU); c.fill();
-  }
-  // Шов между ногами — чтобы брюки не сливались в одну колонну.
-  c.fillStyle = tone(cloth, -0.3);
-  c.beginPath(); c.moveTo(-6, -160); c.quadraticCurveTo(0, -136, 0, -118); c.quadraticCurveTo(0, -136, 6, -160); c.fill();
-  if (!eod) {
-    // Карман-карго на левом бедре — с клапаном и пуговицей.
-    c.fillStyle = figShade(c, 14, 36, tone(K.cloth, -0.08));
-    figRound(c, 15, -130, 20, 24, 3); c.fill();
-    c.fillStyle = tone(K.cloth, -0.2); figRound(c, 14, -132, 22, 8, 3); c.fill();
-    c.fillStyle = '#1a2330'; c.beginPath(); c.arc(25, -126.5, 1.2, 0, TAU); c.fill();
-  }
+    c.moveTo(x + r, y); c.lineTo(x + w - r, y); c.quadraticCurveTo(x + w, y, x + w, y + r);
+    c.lineTo(x + w, y + h - r); c.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    c.lineTo(x + r, y + h); c.quadraticCurveTo(x, y + h, x, y + h - r);
+    c.lineTo(x, y + r); c.quadraticCurveTo(x, y, x + r, y); c.closePath();
+  };
+  return {
+    rect(x, y, w, h, r, fill, stroke, lw) { round(x, y, w, h, r || 0); style(fill, stroke, lw); },
+    circle(x, y, r, fill, stroke, lw) { c.beginPath(); c.arc(x, y, r, 0, TAU); style(fill, stroke, lw); },
+    ellipse(x, y, rx, ry, fill, stroke, lw) { c.beginPath(); c.ellipse(x, y, rx, ry, 0, 0, TAU); style(fill, stroke, lw); },
+    // Путь в синтаксисе SVG. Без Path2D (старые браузеры, заглушка тестов) — пропускаем.
+    path(d, fill, stroke, lw, cap = 'round') {
+      if (typeof Path2D === 'undefined') return;
+      const p = new Path2D(d);
+      c.lineCap = cap; c.lineJoin = 'round';
+      if (fill) { c.fillStyle = fill; c.fill(p); }
+      if (stroke) { c.strokeStyle = stroke; c.lineWidth = lw || 2; c.stroke(p); }
+    },
+    lines(d, stroke, lw, dash) { if (dash) c.setLineDash && c.setLineDash(dash); this.path(d, null, stroke, lw); if (dash) c.setLineDash && c.setLineDash([]); },
+  };
 }
 
-/** Набедренная кобура с пистолетом — на правом бедре бойца, слева от зрителя. */
-function figHolster(c, K, look) {
-  if (!look.holster) return;
-  c.fillStyle = K.rig;
-  c.fillRect(-36, -128, 25, 4); c.fillRect(-36, -110, 24, 4);           // ремни вокруг бедра
-  c.fillRect(-31, -160, 5, 34);                                          // подвес от пояса
-  c.fillStyle = figShade(c, -40, -22, '#202b37');
-  figRound(c, -41, -146, 17, 40, 4); c.fill();
-  c.strokeStyle = 'rgba(255,255,255,.1)'; c.lineWidth = 0.7;
-  figRound(c, -39.5, -144.5, 14, 37, 3); c.stroke();
-  // Рукоять торчит из кобуры.
-  c.fillStyle = figShade(c, -40, -26, '#2b3139');
-  figRound(c, -38.5, -157, 11, 14, 2.5); c.fill();
-  c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 0.6;
-  for (let y = -154; y < -145; y += 2) { c.beginPath(); c.moveTo(-37, y); c.lineTo(-29, y); c.stroke(); }
+/** Фон: оливковый пол с сеткой, пятнами, трещинами и гильзами. Не меняется —
+ *  рисуется один раз в отдельный холст. */
+let agentBg = null;
+function agentBackground(dpr) {
+  if (agentBg && agentBg.dpr === dpr) return agentBg.cv;
+  const cv = document.createElement('canvas');
+  cv.width = FIGURE.W * dpr; cv.height = FIGURE.H * dpr;
+  const c = cv.getContext('2d');
+  if (!c || !c.setTransform) return null;
+  const V = FIGURE.VIEW;
+  c.setTransform(dpr * V.s, 0, 0, dpr * V.s, -V.x * dpr * V.s, -V.y * dpr * V.s);
+  const p = agentPen(c);
+  p.rect(0, 0, 680, 720, 0, AG.floor);
+  p.rect(0, 0, 120, 720, 0, AG.grass);
+  for (let x = 120; x < 680; x += 120) p.lines(`M${x},0 L${x},720`, '#666e5c', 1);
+  for (let y = 120; y < 720; y += 120) p.lines(`M0,${y} L680,${y}`, '#666e5c', 1);
+  for (const [x, y, rx, ry, col] of [[520, 170, 70, 45, '#575e4e'], [160, 560, 80, 50, '#575e4e'], [560, 540, 55, 38, '#5a6150'],
+                                     [230, 130, 45, 30, '#5a6150'], [60, 300, 50, 60, '#58724f'], [50, 620, 40, 28, '#58724f']])
+    p.ellipse(x, y, rx, ry, col);
+  p.lines('M500,300 L530,330 L528,360 L560,390 M530,330 L570,328 M180,420 L200,440 L196,470 M590,640 L610,620 L640,625', '#4c5244', 2);
+  for (const [x, y, r] of [[470, 620, 3], [480, 612, 2], [200, 660, 3], [560, 250, 2], [160, 300, 2], [445, 455, 3]]) p.circle(x, y, r, '#6b7260');
+  p.lines('M120,0 L120,720', '#6fa37a', 4, [18, 12]);
+  p.rect(0, 0, 680, 30, 0, '#2b2d2c');
+  p.rect(0, 26, 680, 4, 0, '#3a3d3a');
+  for (const [x, y, a] of [[461, 654, 25], [484, 674, -40], [441, 682, 70]]) {        // гильзы
+    c.save(); c.translate(x, y); c.rotate(a * Math.PI / 180);
+    p.rect(-6, -2.5, 12, 5, 2, AG.brass, '#8a6a2e', 1.5);
+    c.restore();
+  }
+  agentBg = { cv, dpr };
+  return cv;
 }
 
-/* ── Корпус ─────────────────────────────────────────────────────────────── */
-function figTorso(c, K, look) {
+/* ── Части бойца ──────────────────────────────────────────────────────── */
+
+function agentLegs(p, look) {
   const eod = look.armor === 'eod';
-  const cloth = eod ? '#3a4d62' : K.cloth;
-  const w = eod ? 54 : 46;
-  c.fillStyle = figShade(c, -w, w, cloth);
-  c.beginPath();
-  c.moveTo(-10, -268);
-  c.quadraticCurveTo(-30, -262, -w, -250);                   // трапеция к плечу
-  c.quadraticCurveTo(-w - 5, -238, -w + 4, -222);            // дельта
-  c.quadraticCurveTo(-w + 12, -196, -32, -170);              // бок к талии
-  c.lineTo(-34, -154); c.lineTo(34, -154); c.lineTo(32, -170);
-  c.quadraticCurveTo(w - 12, -196, w - 4, -222);
-  c.quadraticCurveTo(w + 5, -238, w, -250);
-  c.quadraticCurveTo(30, -262, 10, -268);
-  c.closePath(); c.fill();
-  // Ворот и молния рубашки.
-  c.fillStyle = tone(cloth, -0.25);
-  c.beginPath(); c.moveTo(-12, -268); c.lineTo(0, -252); c.lineTo(12, -268); c.lineTo(9, -262); c.lineTo(0, -256); c.lineTo(-9, -262); c.fill();
-  c.strokeStyle = tone(cloth, -0.4); c.lineWidth = 1;
-  c.beginPath(); c.moveTo(0, -254); c.lineTo(0, -170); c.stroke();
-  if (look.armor === 'none') {
-    c.fillStyle = '#6f7a86';                                              // зубцы молнии
-    for (let y = -252; y < -172; y += 2.2) c.fillRect(y % 4.4 < 2.2 ? -1.4 : 0, y, 1.4, 1);
-    c.fillStyle = '#9aa5b1'; figRound(c, -1.6, -256, 3.2, 5, 1); c.fill();
-  }
-  if (look.armor === 'none') {
-    // Нагрудные карманы с клапанами и пуговицами — рубашку видно только без брони.
-    for (const x of [-27, 8]) {
-      c.fillStyle = figShade(c, x, x + 19, tone(cloth, -0.06));
-      figRound(c, x, -236, 19, 22, 2.5); c.fill();
-      c.fillStyle = tone(cloth, -0.2);
-      c.beginPath(); c.moveTo(x - 0.5, -237); c.lineTo(x + 19.5, -237); c.lineTo(x + 19.5, -230); c.quadraticCurveTo(x + 9.5, -226, x - 0.5, -230); c.closePath(); c.fill();
-      c.fillStyle = '#1a2330'; c.beginPath(); c.arc(x + 9.5, -229.5, 1.2, 0, TAU); c.fill();
-      c.strokeStyle = tone(cloth, 0.2); c.lineWidth = 0.5;
-      figRound(c, x + 1.5, -223, 16, 8, 1.5); c.stroke();
+  const w = eod ? 54 : 44;
+  p.lines('M320,380 L313,500 L310,628', AG.ink, w);
+  p.lines('M360,380 L368,500 L372,628', AG.ink, w);
+  p.lines('M320,380 L313,500 L310,628', eod ? '#4a5a80' : AG.navy, w - 6);
+  p.lines('M360,380 L368,500 L372,628', eod ? '#4a5a80' : AG.navy, w - 6);
+  p.lines('M331,385 L324,500 L322,622', AG.navyD, 12);
+  p.lines('M372,385 L380,500 L384,622', AG.navyD, 12);
+  p.lines('M306,390 L300,490 M350,390 L356,490', AG.navyL, 5);
+  p.lines('M320,382 L313,498 M364,382 L370,498 M312,524 L310,620 M369,524 L372,620', '#253049', 1.5, [3, 3]);
+  if (eod) {                                         // щитки сапёра на бёдрах и голенях
+    for (const [x, y, h] of [[292, 400, 70], [349, 400, 70], [290, 530, 80], [352, 530, 80]]) {
+      p.rect(x, y, 40, h, 10, '#566a92', AG.ink, 3);
+      p.lines(`M${x + 4},${y + h / 3} L${x + 36},${y + h / 3} M${x + 4},${y + 2 * h / 3} L${x + 36},${y + 2 * h / 3}`, AG.ink, 1.5);
     }
-    figFold(c, -30, -196, -20, -190, -10, -194, cloth);
-    figFold(c, 30, -196, 20, -190, 10, -194, cloth);
-  }
-
-  // Ремень с пряжкой и подсумками.
-  c.fillStyle = figShade(c, -35, 35, K.rig);
-  figRound(c, -35, -170, 70, 13, 3); c.fill();
-  c.fillStyle = '#8b96a3';
-  figRound(c, -6, -168, 12, 9, 2); c.fill();
-  c.fillStyle = K.rig; c.fillRect(-3, -166, 6, 5);
-  for (const x of [-30, 16]) {
-    c.fillStyle = figShade(c, x, x + 14, K.pouch);
-    figRound(c, x, -171, 14, 17, 3); c.fill();
-    c.fillStyle = tone(K.pouch, -0.25); figRound(c, x, -171, 14, 5, 2); c.fill();
-  }
-}
-
-/** Жилет по надетой броне: у каждого вида свой силуэт. */
-function figVest(c, K, look) {
-  const a = look.armor;
-  if (a === 'none') return;
-  if (a === 'eod') { figBombSuit(c, K); return; }
-  const soft = a === 'kevlar' || a === 'helmet';
-  const vest = soft ? '#27384b' : '#223043';
-  // Плечевые лямки.
-  c.fillStyle = figShade(c, -40, 40, tone(vest, -0.1));
-  figPoly(c, [[-26, -262], [-14, -264], [-12, -236], [-26, -234]]); c.fill();
-  figPoly(c, [[26, -262], [14, -264], [12, -236], [26, -234]]); c.fill();
-  // Основная панель.
-  c.fillStyle = figShade(c, -38, 38, vest);
-  c.beginPath();
-  c.moveTo(-30, -242); c.quadraticCurveTo(0, -250, 30, -242);
-  c.lineTo(37, -222); c.lineTo(36, -178);
-  c.quadraticCurveTo(0, -170, -36, -178);
-  c.lineTo(-37, -222); c.closePath(); c.fill();
-  // Строчка по краю.
-  c.strokeStyle = tone(vest, 0.22); c.lineWidth = 0.6;
-  c.beginPath();
-  c.moveTo(-27, -238); c.quadraticCurveTo(0, -246, 27, -238);
-  c.lineTo(33, -221); c.lineTo(32, -181); c.quadraticCurveTo(0, -174, -32, -181); c.lineTo(-33, -221); c.closePath();
-  c.stroke();
-  // Нашивка на липучке.
-  c.fillStyle = '#16202b';
-  figRound(c, -17, -238, 34, 10, 2); c.fill();
-  c.fillStyle = K.accent;
-  c.font = '700 6px ui-monospace, Menlo, monospace'; c.textAlign = 'center';
-  c.fillText('СПЕЦНАЗ', 0, -230.8);
-
-  if (soft) {
-    // Мягкий кевлар: горизонтальные липучки по бокам и простеганная панель.
-    c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1;
-    for (const y of [-214, -198]) { c.beginPath(); c.moveTo(-30, y); c.quadraticCurveTo(0, y + 4, 30, y); c.stroke(); }
-    c.fillStyle = tone(vest, -0.18);
-    figRound(c, -38, -212, 8, 24, 3); c.fill(); figRound(c, 30, -212, 8, 24, 3); c.fill();
   } else {
-    // Плитоноска: видна плита, пояс-камербанд, три магазина и подсумок.
-    c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = 1.2;
-    figRound(c, -26, -226, 52, 50, 10); c.stroke();
-    c.fillStyle = figShade(c, -40, 40, tone(vest, -0.12));
-    figRound(c, -40, -212, 14, 34, 4); c.fill(); figRound(c, 26, -212, 14, 34, 4); c.fill();
-    for (let i = 0; i < 3; i++) {
-      const x = -24 + i * 16.5;
-      c.fillStyle = '#2a3a4d';
-      figRound(c, x + 2, -214, 11, 8, 2); c.fill();                   // верх магазина
-      c.fillStyle = figShade(c, x, x + 15, K.pouch);
-      figRound(c, x, -208, 15, 26, 3); c.fill();
-      c.fillStyle = tone(K.pouch, -0.22);
-      figRound(c, x, -208, 15, 7, 2.5); c.fill();                     // клапан
-      c.fillStyle = '#10161e'; c.fillRect(x + 6, -203, 3, 3);
-    }
-    // Стропы MOLLE: ряды ленты с закрепками — на поясе-камербанде и над подсумками.
-    for (const [x0, x1] of [[-40, -27], [27, 40], [-24, 24]]) {
-      const rows = x1 - x0 > 20 ? [-221, -217] : [-208, -201, -194, -187];
-      for (const y of rows) {
-        c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(x0, y, x1 - x0, 2.2);
-        c.fillStyle = 'rgba(255,255,255,.1)'; c.fillRect(x0, y, x1 - x0, 0.6);
-        c.fillStyle = 'rgba(0,0,0,.5)';
-        for (let x = x0 + 3; x < x1; x += 6.5) c.fillRect(x, y - 0.4, 0.8, 3);
-      }
-    }
-    // Рация в подсумке на левом боку и антенна вдоль плеча.
-    c.fillStyle = figShade(c, 29, 41, '#1b2430');
-    figRound(c, 29, -186, 12, 17, 2.5); c.fill();
-    c.fillStyle = '#11171e'; c.fillRect(32, -191, 6, 5);
-    c.strokeStyle = '#0d1116'; c.lineWidth = 1.6; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(35, -191); c.quadraticCurveTo(37, -236, 31, -270); c.stroke();
-    c.fillStyle = '#0d1116'; c.beginPath(); c.arc(31, -270, 1.6, 0, TAU); c.fill();
-    // Жгут на правой лямке: чёрная катушка с красным язычком.
-    c.fillStyle = figShade(c, -26, -16, '#161c23');
-    figRound(c, -25.5, -258, 9, 14, 2.5); c.fill();
-    c.fillStyle = '#c3322b'; c.fillRect(-23, -246, 4, 3.5);
-    if (a === 'heavy') {
-      // Тяжёлый: воротник, наплечники и паховая пластина.
-      c.fillStyle = figShade(c, -24, 24, '#2c3d52');
-      c.beginPath(); c.moveTo(-22, -266); c.quadraticCurveTo(0, -256, 22, -266); c.lineTo(20, -252); c.quadraticCurveTo(0, -244, -20, -252); c.closePath(); c.fill();
-      for (let k = 0; k < 3; k++) {
-        const y = -158 + k * 11, hw = 15 - k * 2.5;
-        c.fillStyle = figShade(c, -hw, hw, tone('#2c3d52', -k * 0.06));
-        c.beginPath(); c.moveTo(-hw, y); c.lineTo(hw, y); c.lineTo(hw - 1.5, y + 12);
-        c.quadraticCurveTo(0, y + 15, -hw + 1.5, y + 12); c.closePath(); c.fill();
-        c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = 0.8; c.stroke();
-      }
-    }
+    // Карман на левом бедре (у зрителя слева) с клапаном и кнопкой.
+    p.rect(291, 412, 30, 40, 4, '#394664', AG.ink, 2.5);
+    p.rect(291, 412, 30, 12, 3, '#43527a', AG.ink, 2.5);
+    p.circle(306, 420, 2, AG.ink);
   }
-  // Жилет давит на рубашку: тень по нижнему краю.
-  figOcclusion(c, -34, -176, 68, 8);
-  // Нож: ножны вниз рукоятью на груди, со стороны опорной руки.
-  if (look.knife) figKnife(c, 27, -244, 0.35);
+  p.lines('M290,556 L334,556 M290,592 L334,592', AG.dark, 3);
+  // Наколенники на ремнях.
+  for (const x of [298, 353]) {
+    p.rect(x, 480, 30, 42, 10, AG.pad, AG.ink, 3);
+    p.path(`M${x + 5},490 Q${x + 15},484 ${x + 25},490`, null, AG.padHi, 3);
+    p.rect(x - 7, 494, 8, 12, 2, AG.ink); p.rect(x + 29, 494, 8, 12, 2, AG.ink);
+  }
 }
 
-/** Наплечники тяжёлого костюма: три пластины внахлёст. Поверх рук, иначе их не видно. */
-function figPauldrons(c, look) {
-  if (look.armor !== 'heavy') return;
-  for (const s of [-1, 1]) {
+function agentBoots(p) {
+  for (const x of [283, 348]) {
+    p.rect(x, 618, 50, 50, 10, AG.darker, AG.ink2, 3);
+    p.rect(x, 652, 50, 14, 4, AG.ink2);
+    p.lines(`M${x + 3},658 L${x + 47},658`, '#3a4152', 1.5);
+    p.lines(`M${x + 15},626 L${x + 35},632 M${x + 35},626 L${x + 15},632 M${x + 15},636 L${x + 35},642 M${x + 35},636 L${x + 15},642`, '#5a6272', 2);
+    p.rect(x, 616, 50, 7, 3, AG.belt);
+  }
+}
+
+/** Кобура на правом бедре бойца (у зрителя справа) с рукоятью пистолета. */
+function agentHolster(p, look) {
+  if (!look.holster) return;
+  p.rect(380, 385, 26, 12, 3, AG.darker, AG.ink2, 2);
+  p.rect(382, 378, 18, 18, 4, '#3a3f4a', AG.ink2, 2);
+  p.lines('M386,382 L396,382 M386,386 L396,386 M386,390 L396,390', '#555b68', 1.5);
+  p.rect(378, 394, 30, 52, 6, '#252b3a', AG.ink2, 3);
+  p.lines('M384,402 L402,402 M384,436 L402,436', '#3a4152', 2);
+  p.rect(362, 412, 46, 7, 2, AG.darker); p.rect(362, 432, 46, 7, 2, AG.darker);
+  p.rect(394, 410, 8, 10, 1, '#8f99ad'); p.rect(394, 430, 8, 10, 1, '#8f99ad');
+}
+
+function agentTorso(p, look) {
+  const eod = look.armor === 'eod';
+  if (eod) {
+    // Сапёрная куртка: широкая, в стёганых сегментах.
+    p.path('M266,190 Q340,168 414,190 L408,372 Q340,392 272,372 Z', '#4a5a80', AG.ink, 4);
+    for (let y = 222; y < 370; y += 30) p.lines(`M274,${y} Q340,${y + 10} 406,${y}`, AG.ink, 2);
+    return;
+  }
+  p.path('M280,195 Q340,176 400,195 L394,358 Q340,372 286,358 Z', AG.cloth, AG.ink, 4);
+  p.path('M372,196 Q392,200 398,198 L392,356 Q380,362 368,364 Z', AG.navy);
+  p.path('M322,184 L340,202 L358,184', AG.dark, AG.ink, 3);
+  if (look.armor === 'none') {
+    // Рубашка: молния и нагрудные карманы с клапанами.
+    p.lines('M340,202 L340,352', AG.ink, 2);
+    for (const x of [300, 350]) {
+      p.rect(x, 222, 30, 34, 3, '#445479', AG.ink, 2.5);
+      p.rect(x, 220, 30, 11, 3, '#4f5f87', AG.ink, 2.5);
+      p.circle(x + 15, 227, 2, AG.ink);
+    }
+  }
+}
+
+/** Жилет по броне: мягкий кевлар, плитоноска эскиза, тяжёлый — с наплечниками. */
+function agentVest(p, look) {
+  const a = look.armor;
+  if (a === 'none' || a === 'eod') return;
+  const soft = a === 'kevlar' || a === 'helmet';
+  p.rect(298, 196, 14, 24, 3, AG.strap, AG.ink, 2);
+  p.rect(368, 196, 14, 24, 3, AG.strap, AG.ink, 2);
+  p.rect(296, 208, 88, 126, 8, soft ? '#3f4e72' : AG.vest, AG.ink, 3);
+  // Нашивка на липучке — синяя, как на эскизе.
+  p.rect(304, 218, 34, 30, 3, '#4f5f87', AG.dark, 2);
+  p.rect(308, 222, 26, 15, 2, AG.blue);
+  p.rect(308, 226, 26, 3, 0, '#8fb0e0'); p.rect(308, 232, 26, 3, 0, '#3a5f99');
+  p.rect(308, 240, 26, 4, 1, AG.strap);
+  if (soft) {
+    p.lines('M300,262 Q340,270 380,262 M300,300 Q340,308 380,300', AG.dark, 2);
+    if (look.knife) agentKnife(p, 360, 226);
+    return;
+  }
+  // Плитоноска: стропы MOLLE, рация с антенной, три подсумка с магазинами.
+  p.lines('M300,258 L380,258 M300,270 L380,270 M300,282 L380,282', AG.navy, 2);
+  p.lines('M320,254 L320,286 M340,254 L340,286 M360,254 L360,286', AG.dark, 1.5);
+  p.rect(346, 216, 30, 34, 3, '#2f3a52', AG.ink, 2);
+  p.rect(350, 220, 22, 10, 2, '#3a4561');
+  p.circle(354, 240, 3, '#7aa35a'); p.circle(364, 240, 3, AG.ink);
+  p.path('M370,216 L376,176 L378,150', null, AG.ink, 3);
+  p.circle(378, 148, 3, AG.ink);
+  for (const x of [300, 328, 356]) {
+    p.rect(x, 290, 25, 40, 4, AG.pouch, AG.ink, 2.5);
+    p.rect(x + 3, 286, 19, 8, 2, AG.dark);
+    p.rect(x + 8, 280, 9, 8, 1, AG.darker);
+    p.lines(`M${x + 4},312 L${x + 21},312`, AG.pad, 1.5);
+  }
+  if (look.knife) agentKnife(p, 286, 232);
+}
+
+function agentKnife(p, x, y) {
+  p.rect(x, y, 9, 34, 3, AG.darker, AG.ink2, 2);
+  p.rect(x + 1, y - 12, 7, 13, 2, '#3a4152', AG.ink2, 1.5);
+}
+
+/** Наплечники, воротник и паховая пластина тяжёлого костюма; наплечники сапёра. */
+function agentHeavy(p, look) {
+  if (look.armor !== 'heavy' && look.armor !== 'eod') return;
+  const col = look.armor === 'eod' ? '#566a92' : '#3a4868';
+  for (const [cx, dir] of [[285, -1], [395, 1]])
     for (let k = 2; k >= 0; k--) {
-      const x = s * (46 + k * 2), y = -247 + k * 9;
-      c.fillStyle = figShade(c, x - 14, x + 14, tone('#34475e', -k * 0.07));
-      c.beginPath();
-      c.moveTo(x - 13, y + 3); c.quadraticCurveTo(x, y - 10, x + 13, y + 3);
-      c.quadraticCurveTo(x, y + 9, x - 13, y + 3);
-      c.fill();
-      c.strokeStyle = 'rgba(0,0,0,.45)'; c.lineWidth = 0.8; c.stroke();
-      c.fillStyle = '#8b96a3'; c.beginPath(); c.arc(x, y - 1, 0.9, 0, TAU); c.fill();   // заклёпка
+      const y = 196 + k * 16, x = cx + dir * k * 4;
+      p.path(`M${x - 24},${y + 6} Q${x},${y - 18} ${x + 24},${y + 6} Q${x},${y + 14} ${x - 24},${y + 6} Z`, col, AG.ink, 3);
+      p.circle(x, y - 2, 2, '#8f99ad');
     }
+  if (look.armor === 'heavy') {
+    p.path('M318,180 Q340,192 362,180 L360,196 Q340,206 320,196 Z', '#3a4868', AG.ink, 3);   // воротник
+    for (let k = 0; k < 2; k++)
+      p.path(`M${320 + k * 4},${374 + k * 16} L${360 - k * 4},${374 + k * 16} L${356 - k * 4},${392 + k * 16} Q340,${398 + k * 16} ${324 + k * 4},${392 + k * 16} Z`,
+             '#3a4868', AG.ink, 2.5);
+  } else {
+    for (let k = 0; k < 3; k++)                                                     // передник сапёра
+      p.path(`M${306 + k * 4},${370 + k * 24} L${374 - k * 4},${370 + k * 24} L${370 - k * 4},${396 + k * 24} L${310 + k * 4},${396 + k * 24} Z`,
+             '#566a92', AG.ink, 2.5);
   }
 }
 
-function figKnife(c, x, y, ang) {
-  c.save(); c.translate(x, y); c.rotate(ang);
-  c.fillStyle = '#141b23'; figRound(c, -3.2, 0, 6.4, 22, 2.5); c.fill();         // ножны
-  c.fillStyle = '#39434f'; figRound(c, -2.6, -11, 5.2, 11, 2); c.fill();         // рукоять
-  c.fillStyle = '#8b96a3'; c.fillRect(-4, -1, 8, 2);                              // гарда
+function agentBelt(p, look) {
+  if (look.armor === 'eod') return;
+  p.rect(288, 350, 104, 24, 5, AG.belt, AG.ink, 3);
+  p.lines('M292,356 L388,356 M292,368 L388,368', '#3a4152', 1.5, [3, 3]);
+  p.rect(330, 352, 20, 20, 3, '#8f99ad', AG.steelD, 2);
+  p.rect(336, 358, 8, 8, 1, AG.steelD);
+  p.rect(294, 346, 24, 26, 4, AG.pouch, AG.ink, 2.5);
+  p.rect(296, 344, 20, 8, 2, AG.dark);
+  p.rect(360, 346, 18, 24, 4, AG.pouch, AG.ink, 2.5);
+  p.path('M286,370 Q280,395 290,410 L318,410 Q322,390 316,372 Z', '#2f3a52', AG.ink, 2.5);
+}
+
+/** Руки: левая бойца держит рукоять у пояса, правая — цевьё. */
+function agentArms(p, look) {
+  const eod = look.armor === 'eod';
+  const w = eod ? 44 : 36;
+  p.lines('M392,208 L412,276 L324,288', AG.ink, w);
+  p.lines('M288,208 L252,266 L244,320', AG.ink, w);
+  p.lines('M392,208 L412,276 L324,288', eod ? '#4a5a80' : AG.navy, w - 6);
+  p.lines('M288,208 L252,266 L244,320', eod ? '#4a5a80' : AG.navy, w - 6);
+  p.lines('M402,212 L420,272', AG.navyD, 10);
+  p.lines('M270,238 L258,262', AG.navyL, 6);
+  p.ellipse(412, 276, 16, 14, AG.pad, AG.ink, 3);
+  p.ellipse(252, 266, 16, 14, AG.pad, AG.ink, 3);
+  if (look.armor !== 'heavy' && look.armor !== 'eod') {
+    p.circle(395, 205, 21, AG.helmet, AG.ink, 3);
+    p.circle(285, 205, 21, AG.helmet, AG.ink, 3);
+    p.rect(274, 198, 22, 16, 3, AG.strap, AG.dark, 1.5);
+    p.lines('M277,202 L293,202 M277,206 L293,206 M277,210 L293,210', AG.padHi, 1.5);
+  }
+}
+
+function agentGloves(p) {
+  p.circle(322, 288, 16, AG.darker, AG.ink2, 3);
+  p.path('M310,280 Q322,272 334,282', null, AG.navy, 3);
+  p.lines('M314,290 L330,292 M314,296 L328,298', AG.ink2, 1.5);
+  p.circle(243, 322, 16, AG.darker, AG.ink2, 3);
+  p.path('M231,314 Q243,306 255,316', null, AG.navy, 3);
+  p.lines('M235,324 L251,327 M235,330 L249,333', AG.ink2, 1.5);
+}
+
+/* ── Оружие ───────────────────────────────────────────────────────────────
+   Ствол висит на ремне поперёк груди: приклад у правого плеча, дуло вниз
+   влево. Рисуется в своей системе: x — к дулу, рукоять на x≈114. Длины —
+   из таблицы стволов боя, поэтому AWP длиннее AK, а MP5 короче. */
+const AGENT_GUN = { GRIP: 114, BACK: 11.4, FRONT: 6.6 };
+
+function agentGun(c, p, wid) {
+  const w = WEAPONS[wid];
+  if (w.slot === 'pistol') { agentPistolInHand(c, p, wid); return; }
+  const g = GUN_SHAPES[wid] || GUN_SHAPES.ak;
+  const cls = PEN_CLASS[wid];
+  const G = AGENT_GUN.GRIP;
+  const rear = G - Math.min(-g.parts[0][0], 13) * AGENT_GUN.BACK;
+  const muzzle = G + g.len * AGENT_GUN.FRONT;
+  const bull = ['aug', 'famas', 'p90'].includes(wid);
+  const shotgun = cls === 'shotgun', sniper = cls === 'sniper', smg = cls === 'light';
+  const wood = g.parts.some(q => q[4] === 2) && !shotgun;
+  const body = wid === 'awp' ? '#3e4a38' : wid === 'scar20' ? '#8a7858' : wid === 'aug' ? '#3e4a38' : AG.gunM;
+  const recv0 = bull ? rear + 10 : G - 62, recv1 = bull ? G + 40 : G + 30;
+  const hand0 = recv1, hand1 = Math.max(hand0 + 30, muzzle - (sniper ? 90 : shotgun ? 40 : 80));
+
+  c.save();
+  c.translate(398, 222); c.rotate(148.6 * Math.PI / 180); c.scale(1, -1);
+  p.path(`M${rear - 4},-6 Q60,40 150,14`, null, AG.gun, 5);                    // ремень
+  // Приклад.
+  if (wid === 'mac10') p.lines(`M${recv0},-4 L${rear},-4 L${rear},10`, AG.steelD, 3);
+  else if (!bull) {
+    p.rect(rear, -10, recv0 - rear + 4, 20, 5, wood ? '#6d4b2d' : body, AG.ink2, 3);
+    p.rect(rear + 4, -6, 8, 12, 2, AG.ink2);
+    if (sniper) p.rect(rear + 30, -16, 40, 8, 3, body, AG.ink2, 2);
+  }
+  // Ствольная коробка (у буллпапа — весь корпус).
+  p.rect(recv0, -11, recv1 - recv0, 22, 4, bull ? body : AG.gunM, AG.ink2, 3);
+  p.rect(recv0 + (recv1 - recv0) * 0.5, -5, 24, 8, 2, '#1b1f28');
+  p.rect(recv0 + 6, -6, 14, 5, 2, '#555b68');
+  // Магазин: изогнутый у AK и Galil, над корпусом у P90, в рукояти у MAC-10.
+  const mx = bull ? rear + 24 : G - 28;
+  if (wid === 'ak' || wid === 'galil') p.path(`M${mx},8 L${mx + 18},8 Q${mx + 26},30 ${mx + 36},48 L${mx + 18},52 Q${mx + 8},32 ${mx},8 Z`,
+                                              wid === 'ak' ? '#6b3a22' : AG.gunD, AG.ink2, 3);
+  else if (wid === 'p90') p.rect(recv0 + 10, -20, 70, 10, 3, '#8a7a5a', AG.ink2, 2);
+  else if (wid !== 'mac10' && !shotgun) {
+    p.rect(mx, 8, 18, sniper ? 22 : smg ? 34 : 38, 3, AG.gunD, AG.ink2, 3);
+    p.lines(`M${mx + 3},18 L${mx + 15},18 M${mx + 3},26 L${mx + 15},26`, '#3a404d', 1.5);
+  }
+  // Рукоять и скоба.
+  p.rect(G - 6, 8, 13, wid === 'mac10' ? 44 : 20, 4, AG.gunD, AG.ink2, 2.5);
+  p.path(`M${G - 42},11 Q${G - 34},22 ${G - 26},11`, null, AG.ink2, 2.5);
+  // Цевьё с планкой, рукоятка и фонарь.
+  if (!bull && wid !== 'mac10') {
+    p.rect(hand0, -9, hand1 - hand0, 18, 4, wood ? '#6d4b2d' : AG.gun, AG.ink2, 3);
+    if (!wood) for (let x = hand0 + 6; x < hand1 - 4; x += 8) p.rect(x, -13, 4, 4, 0, '#3a404d');
+    if (!shotgun && !sniper) {
+      p.rect(hand0 + 8, 9, 12, 24, 3, AG.gunD, AG.ink2, 2.5);
+      p.rect(hand0 + 34, 9, 30, 11, 4, AG.darker, AG.ink2, 2);
+      p.rect(hand0 + 62, 10, 5, 9, 1, '#e8e2b8');
+    }
+  }
+  if (shotgun) {                                                          // помпа под стволом
+    p.rect(hand0, 6, muzzle - hand0 - 20, 8, 3, AG.gunD, AG.ink2, 2);
+    p.rect(hand0 + 20, 3, 50, 14, 4, AG.gun, AG.ink2, 2.5);
+    for (let x = hand0 + 26; x < hand0 + 66; x += 7) p.lines(`M${x},5 L${x},15`, '#3a404d', 1.5);
+  }
+  // Ствол и дульное устройство.
+  const b0 = bull ? recv1 : hand1;
+  p.rect(b0, -4, muzzle - b0 - 14, 8, 3, AG.steel, AG.steelD, 2);
+  p.lines(`M${b0 + 6},-1 L${muzzle - 20},-1`, '#c3cad6', 2);
+  p.rect(muzzle - 16, -7, 16, 14, 2, '#7c8599', AG.steelD, 2);
+  p.rect(hand1 - 8, -18, 6, 10, 1, AG.gun, AG.ink2, 1.5);
+  // Прицел у снайперских и AUG; у остальных — коллиматор.
+  if (g.scope) {
+    p.rect(recv0 + 14, -30, 80, 16, 7, AG.darker, AG.ink2, 3);
+    p.rect(recv0 + 6, -27, 12, 10, 3, AG.gun, AG.ink2, 2);
+    p.rect(recv0 + 92, -28, 10, 14, 3, AG.gun, AG.ink2, 2);
+    p.circle(recv0 + 98, -21, 4, AG.lens);
+    p.rect(recv0 + 44, -36, 10, 8, 2, AG.gun, AG.ink2, 2);
+  } else if (!bull) {
+    p.rect(G - 38, -26, 40, 14, 6, AG.darker, AG.ink2, 3);
+    p.circle(G + 1, -19, 3.5, AG.lens);
+  }
   c.restore();
 }
 
-/** Сапёрный костюм: массивный нагрудник и высокий воротник до подбородка. */
-function figBombSuit(c, K) {
-  c.fillStyle = figShade(c, -52, 52, '#4a5f78');
-  c.beginPath();
-  c.moveTo(-40, -256); c.quadraticCurveTo(0, -268, 40, -256);
-  c.quadraticCurveTo(54, -220, 46, -168);
-  c.quadraticCurveTo(0, -150, -46, -168);
-  c.quadraticCurveTo(-54, -220, -40, -256);
-  c.closePath(); c.fill();
-  c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1.2;
-  for (const y of [-228, -206, -184]) {
-    c.beginPath(); c.moveTo(-42, y); c.quadraticCurveTo(0, y + 8, 42, y); c.stroke();
-  }
-  c.fillStyle = '#16202b'; figRound(c, -17, -246, 34, 10, 2); c.fill();
-  c.fillStyle = '#ffc857';
-  c.font = '700 6px ui-monospace, Menlo, monospace'; c.textAlign = 'center';
-  c.fillText('САПЁР', 0, -238.8);
-  // Паховый щиток.
-  c.fillStyle = figShade(c, -24, 24, '#4a5f78');
-  c.beginPath(); c.moveTo(-24, -162); c.lineTo(24, -162); c.lineTo(16, -118); c.quadraticCurveTo(0, -110, -16, -118); c.closePath(); c.fill();
-  c.strokeStyle = 'rgba(0,0,0,.3)'; c.lineWidth = 1; c.stroke();
+/** Без основного ствола пистолет в правой руке, стволом вниз. */
+function agentPistolInHand(c, p, wid) {
+  const big = wid === 'deagle';
+  c.save();
+  c.translate(322, 288); c.rotate(2.3);
+  p.rect(-10, -9, big ? 58 : 48, 14, 3, big ? '#9aa3ab' : AG.gunM, AG.ink2, 2.5);
+  p.rect(-12, 3, 14, 22, 3, AG.gunD, AG.ink2, 2.5);
+  if (wid === 'usp') p.rect(38, -7, 34, 10, 3, AG.gun, AG.ink2, 2);
+  c.restore();
 }
 
 /* ── Голова ─────────────────────────────────────────────────────────────── */
-function figHead(c, K, look, t) {
-  if (look.head === 'bomb') { figBombHelmet(c, K, t); figOptic(c, look, t, -303); return; }
-  const mask = '#1c242e';
-  // Горловина балаклавы уходит под ворот; под подбородком — тень.
-  c.fillStyle = figShade(c, -10, 10, mask);
-  c.fillRect(-10, -278, 20, 16);
-  figOcclusion(c, -10, -278, 20, 7);
-  // Голова в балаклаве — сфера: свет слева сверху, контровой справа.
-  c.fillStyle = figSphere(c, 0, -292, 25, mask);
-  c.beginPath();
-  c.moveTo(0, -314);
-  c.bezierCurveTo(13, -314, 18, -304, 17.5, -292);
-  c.bezierCurveTo(17, -280, 10, -270, 0, -268.5);
-  c.bezierCurveTo(-10, -270, -17, -280, -17.5, -292);
-  c.bezierCurveTo(-18, -304, -13, -314, 0, -314);
-  c.fill();
-  // Ткань: складки у скул и на шее, шов по центру.
-  figFold(c, -15, -282, -12, -276, -8, -272, mask);
-  figFold(c, 15, -282, 12, -276, 8, -272, mask);
-  figFold(c, -8, -266, 0, -263, 8, -266, mask);
-  c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 0.6;
-  c.beginPath(); c.moveTo(0, -313); c.lineTo(0, -300); c.stroke();
-  // Нос под тканью: блик по спинке, тень сбоку.
-  c.fillStyle = 'rgba(255,255,255,.12)';
-  c.beginPath(); c.ellipse(-0.8, -284.5, 2, 4.6, 0, 0, TAU); c.fill();
-  c.fillStyle = 'rgba(0,0,0,.4)';
-  c.beginPath(); c.ellipse(2.8, -283, 1.8, 3.4, 0.2, 0, TAU); c.fill();
-  // Дыхательная вставка у рта: сетка.
-  c.fillStyle = figSphere(c, 0, -276, 8, '#141a21');
-  figRound(c, -7, -280, 14, 8, 3.5); c.fill();
-  c.fillStyle = 'rgba(255,255,255,.14)';
-  for (let y = -278.6; y < -273; y += 1.9)
-    for (let x = -5.2 + ((y * 10) % 2 ? 0.9 : 0); x < 5.5; x += 1.9) c.fillRect(x, y, 0.8, 0.8);
 
-  if (look.head === 'helmet') figHelmet(c, K);
-  else figCap(c, K);
-  figOptic(c, look, t, -293);
-}
-
-/** Оптика на глазах. Тепловизор — корпус с германиевым объективом (тот
- *  самый фиолетово-золотой отлив); ночное видение — трубки с зелёным
- *  свечением люминофора, которое отсвечивает на маске. */
-function figOptic(c, look, t, cy) {
-  const onHelmet = look.head !== 'cap';
-  if (look.optic === 'thermal') {
-    if (onHelmet) {                                                     // кронштейн от крепления на шлеме
-      c.fillStyle = figShade(c, -3, 3, '#1a2129'); c.fillRect(-2.5, -312, 5, 13);
-    } else {                                                            // ремень вокруг головы
-      c.fillStyle = '#10151b'; c.fillRect(-19, cy - 3, 38, 5);
+function agentHead(c, p, look, t) {
+  if (look.head === 'bomb') { agentBombHelmet(c, p, look, t); return; }
+  p.rect(322, 156, 36, 32, 6, AG.dark, AG.ink, 3);                              // горловина
+  p.lines('M326,172 L354,172', AG.ink, 1.5);
+  p.ellipse(340, 136, 27, 31, AG.skin, AG.ink, 3);
+  p.path('M355,118 Q366,136 360,158 L366,150 Q370,132 360,116 Z', AG.skinD);
+  p.path('M339,128 L336,142 L342,142', null, '#8a6848', 2);
+  // Маска на нижней части лица, гарнитура с микрофоном, чашки на ушах.
+  p.path('M314,142 Q340,152 366,142 L364,160 Q340,174 316,160 Z', AG.dark, AG.ink, 3);
+  p.lines('M322,152 L358,152 M326,160 L354,160', AG.navy, 1.5);
+  p.path('M303,146 Q308,166 326,170', null, AG.ink, 3);
+  p.circle(327, 170, 3, AG.ink);
+  p.path('M300,146 Q296,190 330,200 Q350,208 348,216', null, AG.ink, 2);
+  for (const x of [304, 376]) { p.circle(x, 136, 13, AG.belt, AG.ink, 3); p.circle(x, 136, 6, '#3a4152'); }
+  if (look.head === 'helmet') {
+    p.path('M302,120 Q300,72 340,70 Q380,72 378,120 Z', AG.helmet, AG.ink, 4);
+    p.path('M360,76 Q378,86 378,118 L364,118 Q366,92 356,80 Z', '#3f4e72');
+    p.path('M316,86 Q340,76 360,84', null, AG.padHi, 4);
+    for (const x of [298, 372]) {
+      p.rect(x, 98, 10, 20, 2, AG.belt, AG.ink, 2);
+      p.rect(x + 2, 102, 6, 2, 0, AG.helmet); p.rect(x + 2, 108, 6, 2, 0, AG.helmet);
     }
-    c.fillStyle = figShade(c, -20, 20, '#232b34');
-    figRound(c, -20, cy - 7.5, 40, 14, 5.5); c.fill();
-    c.fillStyle = 'rgba(255,255,255,.18)'; figRound(c, -17, cy - 7, 34, 1.6, 0.8); c.fill();
-    // Окуляры по бокам и объектив по центру.
-    for (const x of [-12.5, 12.5]) {
-      c.fillStyle = figSphere(c, x, cy, 5.2, '#161b21');
-      c.beginPath(); c.arc(x, cy, 5.2, 0, TAU); c.fill();
-      c.fillStyle = '#2a1c10'; c.beginPath(); c.arc(x, cy, 2.8, 0, TAU); c.fill();
-      c.fillStyle = `rgba(255,150,60,${0.35 + 0.1 * Math.sin(t * 3 + x)})`;
-      c.beginPath(); c.arc(x, cy, 1.6, 0, TAU); c.fill();
-    }
-    c.fillStyle = figSphere(c, 0, cy - 0.5, 8, '#2c333c');
-    c.beginPath(); c.arc(0, cy - 0.5, 8, 0, TAU); c.fill();
-    const g = c.createRadialGradient(-2, cy - 3, 0.5, 0, cy - 0.5, 6);
-    g.addColorStop(0, '#b596e0'); g.addColorStop(0.35, '#4c2f72'); g.addColorStop(0.8, '#1a0f2a'); g.addColorStop(1, '#07050c');
-    c.fillStyle = g; c.beginPath(); c.arc(0, cy - 0.5, 6, 0, TAU); c.fill();
-    c.strokeStyle = 'rgba(230,190,90,.55)'; c.lineWidth = 0.9;               // золотой отлив германия
-    c.beginPath(); c.arc(0, cy - 0.5, 4.2, 3.6, 4.6); c.stroke();
-    c.fillStyle = 'rgba(255,255,255,.75)'; c.beginPath(); c.arc(-2.3, cy - 3, 0.9, 0, TAU); c.fill();
-    c.fillStyle = '#ff9a3c'; c.beginPath(); c.arc(16.5, cy - 5, 0.9, 0, TAU); c.fill();   // индикатор
-    return;
-  }
-  const lenses = NVG_LENSES[look.optic];
-  const big = look.optic === 'nvg6';
-  // Кронштейн от шлема и мост, на котором висят трубки.
-  c.fillStyle = figShade(c, -4, 4, '#1a2129');
-  c.fillRect(-3, cy - (big ? 30 : 20), 6, big ? 22 : 13);
-  c.fillStyle = figShade(c, -24, 24, '#1f262e');
-  figRound(c, -23, cy - 6, 46, big ? 21 : 12, 5); c.fill();
-  c.fillStyle = 'rgba(255,255,255,.15)'; c.fillRect(-20, cy - 5.5, 40, 1.2);
-  // Зелёный отсвет на маске и забрале — свет самих приборов.
-  c.save();
-  c.globalCompositeOperation = 'lighter';
-  const spill = c.createRadialGradient(0, cy + 4, 2, 0, cy + 4, 30);
-  spill.addColorStop(0, 'rgba(70,255,120,.22)'); spill.addColorStop(1, 'rgba(70,255,120,0)');
-  c.fillStyle = spill; c.beginPath(); c.arc(0, cy + 4, 30, 0, TAU); c.fill();
-  c.restore();
-  lenses.forEach(([lx, ly, r], i) => {
-    const x = lx, y = cy + ly;
-    // Трубка: металлический цилиндр, торцом к зрителю.
-    c.fillStyle = figSphere(c, x, y, r + 2.4, '#343d47');
-    c.beginPath(); c.arc(x, y, r + 2.4, 0, TAU); c.fill();
-    c.strokeStyle = '#0b0f13'; c.lineWidth = 0.8; c.stroke();
-    // Линза горит зелёным: светится центр, по краю темнее, чуть мерцает.
-    const flick = 0.88 + 0.12 * Math.sin(t * 9 + i * 1.7);
-    const g = c.createRadialGradient(x - r * 0.25, y - r * 0.25, 0.2, x, y, r);
-    g.addColorStop(0, `rgba(220,255,210,${flick})`);
-    g.addColorStop(0.35, `rgba(70,255,120,${flick})`);
-    g.addColorStop(0.8, '#0f5a26');
-    g.addColorStop(1, '#04160a');
-    c.fillStyle = g; c.beginPath(); c.arc(x, y, r, 0, TAU); c.fill();
-    c.save();
-    c.globalCompositeOperation = 'lighter';
-    const halo = c.createRadialGradient(x, y, r * 0.5, x, y, r * 3.2);
-    halo.addColorStop(0, `rgba(90,255,130,${0.45 * flick})`); halo.addColorStop(1, 'rgba(90,255,130,0)');
-    c.fillStyle = halo; c.beginPath(); c.arc(x, y, r * 3.2, 0, TAU); c.fill();
-    c.restore();
-    c.fillStyle = 'rgba(255,255,255,.8)';                                   // блик на стекле
-    c.beginPath(); c.ellipse(x - r * 0.4, y - r * 0.45, r * 0.28, r * 0.16, -0.6, 0, TAU); c.fill();
-  });
-}
-
-/** Гарнитура: чашки на ушах и микрофон у рта. */
-function figHeadset(c, big) {
-  const r = big ? 7.5 : 5.5;
-  for (const s of [-1, 1]) {
-    c.fillStyle = figShade(c, s * 18 - r, s * 18 + r, '#1c242e');
-    c.beginPath(); c.ellipse(s * 18.5, -290, r * 0.75, r * 1.15, 0, 0, TAU); c.fill();
-    c.fillStyle = '#2f3a47';
-    c.beginPath(); c.ellipse(s * 18.5, -290, r * 0.4, r * 0.7, 0, 0, TAU); c.fill();
-  }
-  c.strokeStyle = '#1c242e'; c.lineWidth = 1.6; c.lineCap = 'round';
-  c.beginPath(); c.moveTo(-17, -285); c.quadraticCurveTo(-15, -274, -6.5, -274.5); c.stroke();
-  c.fillStyle = '#111820';
-  c.beginPath(); c.ellipse(-6, -274.6, 2.4, 1.8, 0, 0, TAU); c.fill();
-}
-
-function figCap(c, K) {
-  // Тактическая кепка: купол, козырёк, липучка сверху.
-  c.fillStyle = figShade(c, -19, 19, K.cap);
-  c.beginPath();
-  c.moveTo(-19, -299);
-  c.bezierCurveTo(-19, -322, 19, -322, 19, -299);
-  c.quadraticCurveTo(0, -303, -19, -299);
-  c.fill();
-  c.fillStyle = tone(K.cap, -0.3);
-  c.beginPath(); c.moveTo(-20, -300); c.quadraticCurveTo(0, -306, 20, -300); c.quadraticCurveTo(0, -296, -20, -300); c.fill();
-  c.fillStyle = tone(K.cap, -0.45);
-  c.beginPath(); c.ellipse(0, -298.6, 19, 3, 0, 0, Math.PI); c.fill();          // тень под козырьком
-  c.fillStyle = '#1d2733'; figRound(c, -6, -314, 12, 6, 1.5); c.fill();
-  c.fillStyle = K.accent; c.fillRect(-4, -312, 8, 2);
-  figHeadset(c, false);
-  c.strokeStyle = '#1c242e'; c.lineWidth = 2.2;
-  c.beginPath(); c.moveTo(-18.5, -296); c.quadraticCurveTo(-19, -306, -16, -309); c.stroke();
-}
-
-function figHelmet(c, K) {
-  figHeadset(c, true);
-  // Высокий срез: купол, ушные вырезы, рельсы, крепление ПНВ.
-  figOcclusion(c, -17, -305, 34, 6);
-  c.fillStyle = figSphere(c, 0, -306, 28, K.cap);
-  c.beginPath();
-  c.moveTo(-23, -297);
-  c.bezierCurveTo(-24, -330, 24, -330, 23, -297);
-  c.lineTo(19, -300); c.quadraticCurveTo(15, -300, 13, -304);
-  c.quadraticCurveTo(0, -307, -13, -304);
-  c.quadraticCurveTo(-15, -300, -19, -300);
-  c.closePath(); c.fill();
-  c.strokeStyle = K.capRim; c.lineWidth = 1;
-  c.beginPath(); c.moveTo(-13, -304.5); c.quadraticCurveTo(0, -308, 13, -304.5); c.stroke();
-  for (const s of [-1, 1]) {
-    c.fillStyle = figShade(c, s * 21 - 3, s * 21 + 3, '#1f2935'); figRound(c, s * 21 - 3, -314, 6, 12, 1.5); c.fill();
-    c.fillStyle = '#39475a';
-    for (let y = -312; y < -303; y += 3) c.fillRect(s * 21 - 2.2, y, 4.4, 1.2);
-    c.fillStyle = '#8b96a3';                                                  // винты рельсы
-    c.beginPath(); c.arc(s * 21, -315.5, 0.8, 0, TAU); c.fill();
-    c.beginPath(); c.arc(s * 21, -301, 0.8, 0, TAU); c.fill();
-  }
-  c.fillStyle = '#1b2530'; figRound(c, -9, -326, 18, 6, 2); c.fill();          // липучка сверху
-  c.fillStyle = 'rgba(255,255,255,.07)';
-  for (let x = -8; x < 8; x += 1.6) c.fillRect(x, -325.5, 0.7, 5);
-  c.fillStyle = '#16202b'; figRound(c, -5, -318, 10, 8, 1.5); c.fill();          // крепление ПНВ
-  c.fillStyle = '#2b3642'; figRound(c, -2.5, -315.5, 5, 3, 1); c.fill();
-  c.fillStyle = K.accent; c.beginPath(); c.arc(9, -316, 1, 0, TAU); c.fill();     // маячок
-  // Подбородочный ремень.
-  c.strokeStyle = '#141b23'; c.lineWidth = 1.4;
-  c.beginPath(); c.moveTo(-16, -298); c.quadraticCurveTo(-14, -278, -6, -271); c.stroke();
-  c.beginPath(); c.moveTo(16, -298); c.quadraticCurveTo(14, -278, 6, -271); c.stroke();
-}
-
-function figBombHelmet(c, K, t) {
-  // Воротник до подбородка и круглый шлем с широким забралом.
-  c.fillStyle = figShade(c, -34, 34, '#4a5f78');
-  c.beginPath(); c.moveTo(-34, -258); c.quadraticCurveTo(0, -246, 34, -258); c.lineTo(28, -284); c.quadraticCurveTo(0, -276, -28, -284); c.closePath(); c.fill();
-  c.strokeStyle = 'rgba(0,0,0,.35)'; c.lineWidth = 1; c.stroke();
-  c.fillStyle = figSphere(c, 0, -302, 36, '#3e5168');
-  c.beginPath(); c.ellipse(0, -300, 31, 33, 0, 0, TAU); c.fill();
-  c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = 1.2; c.stroke();
-  const g = c.createLinearGradient(-22, -314, 22, -282);
-  g.addColorStop(0, '#9fe4ff'); g.addColorStop(0.35, '#2c5e7a'); g.addColorStop(1, '#0c1a26');
-  c.fillStyle = g;
-  figRound(c, -23, -314, 46, 30, 12); c.fill();
-  c.strokeStyle = '#1a2430'; c.lineWidth = 2.2; c.stroke();
-  c.fillStyle = 'rgba(255,255,255,.35)';
-  c.beginPath(); c.ellipse(-12 + Math.sin(t * 0.8) * 1.5, -308, 6, 2.2, -0.3, 0, TAU); c.fill();
-  for (const s of [-1, 1]) {                                                       // вентиляция
-    c.fillStyle = '#1a2430'; c.beginPath(); c.arc(s * 26, -300, 3.2, 0, TAU); c.fill();
-  }
-}
-
-/* ── Руки и ствол ───────────────────────────────────────────────────────── */
-
-/** Силуэт ствола сбоку: приклад, ствольная коробка, рукоять, магазин, цевьё,
- *  ствол, прицел. Пропорции — из таблицы стволов боя, поэтому каждый узнаваем.
- *  Начало координат — пистолетная рукоять, ствол смотрит по +x. */
-function figGun(c, wid) {
-  const g = GUN_SHAPES[wid] || GUN_SHAPES.ak;
-  const cls = PEN_CLASS[wid];
-  const pistol = WEAPONS[wid].slot === 'pistol';
-  const S = pistol ? FIGURE.PISTOL_S : FIGURE.GUN_S;
-  const len = g.len * S, rear = Math.min(0, g.parts[0][0] * S);
-  const toneOf = i => GUN_TONE[(g.parts[i] || g.parts[g.parts.length - 1])[4]];
-  const metal = GUN_TONE[1], poly = GUN_TONE[0];
-  const topLine = (x0, x1, y) => {
-    c.strokeStyle = 'rgba(255,255,255,.18)'; c.lineWidth = 0.8;
-    c.beginPath(); c.moveTo(x0, y + 0.6); c.lineTo(x1, y + 0.6); c.stroke();
-  };
-  const vshade = (y0, y1, base) => {
-    const gr = c.createLinearGradient(0, y0, 0, y1);
-    gr.addColorStop(0, tone(base, 0.2)); gr.addColorStop(0.5, base); gr.addColorStop(1, tone(base, -0.4));
-    return gr;
-  };
-
-  if (pistol) {
-    c.fillStyle = vshade(-7, 0, toneOf(1));
-    figRound(c, -6, -7, len + 4, 7, 1.5); c.fill();                               // затвор
-    topLine(-5, len - 2, -7);
-    c.fillStyle = vshade(0, 4, poly); c.fillRect(-4, -0.5, len - 2, 4);           // рамка
-    c.fillStyle = vshade(0, 16, poly);
-    figPoly(c, [[-5, 1], [5, 1], [3, 17], [-7, 16]]); c.fill();                   // рукоять
-    c.strokeStyle = poly; c.lineWidth = 1.4;
-    c.beginPath(); c.moveTo(6, 3); c.quadraticCurveTo(10, 9, 4, 9); c.stroke();  // скоба
-    c.fillStyle = '#10151b'; c.fillRect(len - 2, -5, 2.5, 3);                     // дуло
-    return;
-  }
-
-  const bullpup = ['aug', 'famas', 'p90'].includes(wid);
-  const shotgun = cls === 'shotgun', sniper = cls === 'sniper';
-  const recv0 = bullpup ? rear * 0.95 : -8;
-  const recv1 = bullpup ? len * 0.28 : len * (sniper ? 0.3 : 0.36);
-  const hand1 = len * (sniper ? 0.62 : shotgun ? 0.74 : 0.78);
-
-  // Приклад.
-  if (!bullpup && wid !== 'mac10') {
-    c.fillStyle = vshade(-8, 12, toneOf(0));
-    c.beginPath();
-    c.moveTo(recv0, -7); c.lineTo(rear + 4, sniper ? -8 : -5);
-    c.quadraticCurveTo(rear, -5, rear, 0);
-    c.lineTo(rear, 11); c.lineTo(rear + 7, 12); c.lineTo(recv0, 3); c.closePath(); c.fill();
-    c.fillStyle = '#111820'; c.fillRect(rear - 1, -5, 3, 17);                     // затыльник
-    topLine(rear + 4, recv0, sniper ? -8 : -6);
-  } else if (wid === 'mac10') {
-    c.strokeStyle = metal; c.lineWidth = 1.4;
-    c.beginPath(); c.moveTo(recv0, -4); c.lineTo(recv0 - 22, -3); c.lineTo(recv0 - 22, 6); c.stroke();
-  }
-  // Магазин.
-  c.fillStyle = vshade(0, 30, poly);
-  const magX = bullpup ? recv0 + 10 : 12;
-  if (wid === 'ak' || wid === 'galil') {
-    c.beginPath(); c.moveTo(magX, 3); c.lineTo(magX + 12, 3);
-    c.quadraticCurveTo(magX + 18, 18, magX + 22, 30); c.lineTo(magX + 11, 32);
-    c.quadraticCurveTo(magX + 7, 18, magX, 3); c.fill();
-    c.strokeStyle = 'rgba(255,255,255,.12)'; c.lineWidth = 0.7;
-    for (let k = 1; k < 4; k++) { c.beginPath(); c.moveTo(magX + 2 + k * 3, 6 + k * 6); c.lineTo(magX + 11 + k * 3, 6 + k * 6); c.stroke(); }
-  } else if (wid === 'p90') {
-    c.fillStyle = 'rgba(160,200,220,.55)'; figRound(c, recv0 + 4, -16, len * 0.62, 6, 2); c.fill();
-  } else if (wid === 'mac10') {
-    c.fillRect(-4, 14, 8, 16);
-  } else if (!shotgun) {
-    const mh = sniper ? 12 : wid === 'mp5' ? 22 : 20;
-    const tilt = wid === 'mp5' ? 4 : 1.5;
-    figPoly(c, [[magX, 3], [magX + 10, 3], [magX + 10 + tilt, 3 + mh], [magX + tilt, 3 + mh]]); c.fill();
-  }
-  // Ствольная коробка.
-  c.fillStyle = vshade(-9, 4, toneOf(1));
-  figRound(c, recv0, -9, recv1 - recv0, 12, 2); c.fill();
-  topLine(recv0 + 2, recv1 - 2, -9);
-  c.fillStyle = 'rgba(0,0,0,.35)'; c.fillRect(recv0 + (recv1 - recv0) * 0.45, -6, 9, 2.4);    // окно выброса
-  c.fillStyle = metal; c.fillRect(recv0 + (recv1 - recv0) * 0.72, -6.5, 3, 2);                 // рукоять затвора
-  // Пистолетная рукоять и скоба.
-  c.fillStyle = vshade(0, 20, poly);
-  figPoly(c, [[-3, 2], [7, 2], [3, wid === 'mac10' ? 30 : 20], [-8, 19]]); c.fill();
-  c.strokeStyle = poly; c.lineWidth = 1.6;
-  c.beginPath(); c.moveTo(8, 3); c.quadraticCurveTo(13, 11, 6, 11); c.stroke();
-  // Цевьё с прорезями.
-  c.fillStyle = vshade(-8, 4, toneOf(2));
-  figRound(c, recv1, -8, hand1 - recv1, 11, 2.5); c.fill();
-  topLine(recv1 + 2, hand1 - 2, -8);
-  c.fillStyle = 'rgba(0,0,0,.35)';
-  for (let x = recv1 + 6; x < hand1 - 6; x += 7) figRound(c, x, -4.5, 4, 2.5, 1), c.fill();
-  // Подствольный магазин и цевьё-помпа у дробовика.
-  if (shotgun) {
-    c.fillStyle = vshade(2, 7, metal); c.fillRect(recv1, 3, len * 0.86 - recv1, 4.5);
-    c.fillStyle = vshade(1, 9, toneOf(2)); figRound(c, len * 0.46, 1, len * 0.2, 8.5, 2.5); c.fill();
-    c.strokeStyle = 'rgba(0,0,0,.4)'; c.lineWidth = 0.8;
-    for (let x = len * 0.48; x < len * 0.65; x += 3) { c.beginPath(); c.moveTo(x, 2); c.lineTo(x, 8.5); c.stroke(); }
-  }
-  // Ствол с дульным устройством и мушкой.
-  c.fillStyle = vshade(-5, 0, metal);
-  c.fillRect(hand1, -5, len - hand1, sniper ? 4.2 : 3.4);
-  c.fillStyle = '#20262d'; figRound(c, len - 6, -6.2, 7, 5.6, 1); c.fill();
-  if (!sniper && !g.scope) { c.fillStyle = poly; c.fillRect(hand1 - 3, -13, 2.4, 5); }
-  // Прицел или планка с целиком.
-  if (g.scope) {
-    const sx0 = bullpup ? recv0 + 8 : recv0 + 4, sx1 = sx0 + g.scope[2] * S;
-    c.fillStyle = '#111820'; c.fillRect(sx0 + 6, -12, 3, 4); c.fillRect(sx1 - 9, -12, 3, 4);
-    c.fillStyle = vshade(-19, -11, GUN_TONE[3]);
-    figRound(c, sx0 + 4, -18, sx1 - sx0 - 8, 7, 3); c.fill();
-    figRound(c, sx0, -20, 9, 11, 3); c.fill(); figRound(c, sx1 - 10, -20.5, 10, 12, 3); c.fill();
-    c.fillStyle = '#8fd8ff'; c.fillRect(sx1 - 1.5, -18.5, 1.5, 9);
+    p.rect(382, 100, 8, 14, 3, AG.darker, AG.ink2, 2);                          // маячок
+    p.circle(386, 104, 2, (t % 1.4) < 0.15 ? '#ff8070' : '#e05a4a');
+    p.rect(298, 112, 84, 10, 4, AG.strap, AG.ink, 3);
+    p.rect(326, 94, 28, 18, 4, AG.belt, AG.ink, 2.5);                           // крепление ПНВ
+    p.rect(332, 100, 16, 7, 2, '#555b68');
+    p.rect(326, 74, 28, 12, 3, AG.strap, AG.dark, 2);
+    p.lines('M330,78 L350,78 M330,82 L350,82', AG.dark, 1);
   } else {
-    c.fillStyle = poly; c.fillRect(recv0 + 4, -11.5, recv1 - recv0 - 8, 2.5);
-    c.fillStyle = '#10151b'; c.fillRect(recv0 + 6, -15, 5, 4);
+    // Кепка: купол, козырёк, липучка; под ней — дужка гарнитуры.
+    p.path('M304,118 Q302,80 340,78 Q378,80 376,118 Z', '#3b4a6b', AG.ink, 4);
+    p.path('M300,114 Q340,104 380,114 L384,122 Q340,114 296,122 Z', '#2f3a52', AG.ink, 3);
+    p.rect(328, 88, 24, 12, 3, AG.dark, AG.ink, 2);
+    p.rect(331, 91, 18, 3, 0, AG.blue);
   }
+  agentOptic(c, p, look, t, 340, 129);
 }
 
-/** Перчатка: кисть, охватившая рукоять или цевьё. */
-function figGlove(c, K, x, y, ang, eod) {
-  c.save(); c.translate(x, y); c.rotate(ang);
-  const glove = eod ? '#2a3a4c' : K.glove;
-  c.fillStyle = figShade(c, -7, 7, glove);
-  figRound(c, -6.5, -5.5, 13, 12, 4.5); c.fill();
-  c.strokeStyle = 'rgba(255,255,255,.14)'; c.lineWidth = 0.7;
-  for (let k = -3; k <= 3; k += 3) { c.beginPath(); c.moveTo(k, -4.5); c.lineTo(k, 4.5); c.stroke(); }
-  c.fillStyle = tone(glove, 0.22); figRound(c, -5, -5, 5, 3, 1.5); c.fill();          // накладка на костяшках
-  c.restore();
-}
-
-function figArmsAndGun(c, K, look) {
-  const eod = look.armor === 'eod';
-  const sleeve = eod ? '#4a5f78' : K.cloth;
-  const wid = look.inHands;
-  const pistol = WEAPONS[wid].slot === 'pistol';
-  // Автомат — в низкой готовности поперёк корпуса; пистолет — двумя руками у пояса.
-  const grip = pistol ? { x: 2, y: -176 } : { x: -8, y: -182 };
-  const ang = pistol ? 1.05 : 0.62;
-  const ca = Math.cos(ang), sa = Math.sin(ang);
-  const along = d => ({ x: grip.x + ca * d, y: grip.y + sa * d });
-  const g = GUN_SHAPES[wid] || GUN_SHAPES.ak;
-  const fore = pistol ? along(-2) : along((g.fore || g.len * 0.55) * FIGURE.GUN_S * 1.05);
-  const gripHand = pistol ? { x: grip.x - sa * 6, y: grip.y + ca * 6 } : { x: grip.x - sa * 9 + ca * 1, y: grip.y + ca * 9 + sa * 1 };
-  const foreHand = pistol ? { x: gripHand.x + 5, y: gripHand.y + 2 } : { x: fore.x - sa * 3, y: fore.y + ca * 3 };
-  const wU = eod ? 14 : 10.5, wF = eod ? 12 : 8.5, wW = eod ? 9.5 : 6.5;
-
-  // Правая рука бойца (слева от зрителя) — на рукояти, левая — на цевье.
-  const arms = [
-    { sh: [-44, -244], el: [-58, -198], hand: gripHand },
-    { sh: [44, -244], el: pistol ? [50, -196] : [60, -188], hand: foreHand },
-  ];
-  for (const a of arms) {
-    const side = Math.sign(a.sh[0]);
-    const fa = Math.atan2(a.hand.y - a.el[1], a.hand.x - a.el[0]);
-    const ua = Math.atan2(a.el[1] - a.sh[1], a.el[0] - a.sh[0]);
-    figLimb(c, a.el[0], a.el[1], a.hand.x, a.hand.y, wF, wW, sleeve);
-    figLimb(c, a.sh[0], a.sh[1], a.el[0], a.el[1], wU, wF + 0.5, sleeve);
-    // Дельта — из корпуса, а не шарнир: плечо переходит в руку одной массой.
-    c.fillStyle = figShade(c, a.sh[0] - wU - 3, a.sh[0] + wU + 3, sleeve);
-    c.beginPath(); c.ellipse(a.sh[0] + side * 0.5, a.sh[1] + 7, wU + 0.5, wU + 4, side * 0.2, 0, TAU); c.fill();
-    figFold(c, a.sh[0] - side * 6, a.sh[1] + 14, a.sh[0] + side * 1, a.sh[1] + 19, a.sh[0] + side * 8, a.sh[1] + 13, sleeve);
-    // Складки на сгибе локтя и манжета над перчаткой.
-    const ex = a.el[0] - side * 4, ey = a.el[1] - 3;
-    figFold(c, ex - 4, ey - 6, ex + side * 3, ey, ex - 3, ey + 6, sleeve);
-    const cx = a.hand.x - Math.cos(fa) * 8, cy = a.hand.y - Math.sin(fa) * 8;
-    c.save(); c.translate(cx, cy); c.rotate(fa);
-    c.fillStyle = tone(sleeve, -0.28); figRound(c, -3, -wW - 1, 6, (wW + 1) * 2, 2); c.fill();
-    c.restore();
-    // Налокотник — вытянутый по руке, на ремешке.
-    c.save(); c.translate(a.el[0], a.el[1]); c.rotate((ua + fa) / 2);
-    c.fillStyle = figShade(c, -9, 9, '#243241');
-    figRound(c, -8, eod ? -11 : -8.5, 16, eod ? 22 : 17, 6); c.fill();
-    c.fillStyle = 'rgba(255,255,255,.13)'; figRound(c, -5, -6, 6, 5, 2.5); c.fill();
-    c.restore();
-    // Эмблема отряда на правом плече: щиток с шевроном.
-    if (!eod && side < 0 && look.armor !== 'heavy') {     // под наплечником её не видно
-      const px = a.sh[0] - 3, py = a.sh[1] + 12;
-      c.fillStyle = '#141d28';
-      c.beginPath(); c.moveTo(px - 6.5, py - 6); c.lineTo(px + 6.5, py - 6); c.lineTo(px + 6.5, py + 2);
-      c.quadraticCurveTo(px, py + 8, px - 6.5, py + 2); c.closePath(); c.fill();
-      c.strokeStyle = K.accent; c.lineWidth = 0.8; c.stroke();
-      c.lineWidth = 1.6;
-      c.beginPath(); c.moveTo(px - 4, py - 3); c.lineTo(px, py + 0.5); c.lineTo(px + 4, py - 3); c.stroke();
-      c.beginPath(); c.moveTo(px - 4, py + 0.5); c.lineTo(px, py + 4); c.lineTo(px + 4, py + 0.5); c.stroke();
+/** Оптика: тепловизорные очки без брони, квадрокуляр на 4 зелёные линзы с бронёй. */
+function agentOptic(c, p, look, t, cx, cy) {
+  if (look.optic === 'thermal') {
+    p.rect(cx - 28, cy - 9, 56, 18, 7, '#1d2230', AG.ink2, 3);
+    for (const dx of [-15, 10]) {
+      p.rect(cx + dx - 3, cy - 5, 19, 9, 3, '#8a5a2a');
+      p.rect(cx + dx - 1, cy - 4, 7, 3, 1, '#ffb070');
     }
+    p.rect(cx - 4, cy - 3, 8, 6, 2, AG.ink2);
+    p.circle(cx, cy - 12, 6, '#2a2f3a', AG.ink2, 2);                           // объектив тепловизора
+    p.circle(cx, cy - 12, 3.5, '#4c2f72');
+    return;
   }
-  // Ремень оружия через грудь.
-  if (!pistol) {
-    c.strokeStyle = '#141b23'; c.lineWidth = 2.6;
-    c.beginPath(); c.moveTo(-30, -252); c.quadraticCurveTo(-8, -214, along(-20).x, along(-20).y); c.stroke();
-  }
-  // Ствол отбрасывает тень на корпус — так видно, что он висит перед грудью.
-  if (!pistol) {
-    const rearX = Math.min(0, g.parts[0][0] * FIGURE.GUN_S);
-    c.save(); c.translate(grip.x + 3, grip.y + 7); c.rotate(ang);
-    c.fillStyle = 'rgba(0,0,0,.3)';
-    figRound(c, rearX, -9, g.len * FIGURE.GUN_S * 0.62 - rearX, 17, 7); c.fill();
+  // Кронштейн от крепления на шлеме и мост с четырьмя трубками.
+  p.rect(cx - 4, cy - 26, 8, 18, 2, AG.belt, AG.ink2, 2);
+  p.rect(cx - 30, cy - 10, 60, 16, 6, '#1d2230', AG.ink2, 3);
+  const flick = 0.85 + 0.15 * Math.sin(t * 11);
+  for (const [dx, dy, r] of NVG_LENSES.nvg4) {
+    p.circle(cx + dx, cy + dy, r + 2.5, '#2a2f3a', AG.ink2, 2);
+    // Люминофор светится: ореол через размытие тени, в центре — почти белый.
+    c.save();
+    c.shadowColor = `rgba(80,255,120,${0.9 * flick})`;
+    c.shadowBlur = 14;
+    p.circle(cx + dx, cy + dy, r, `rgba(57,255,106,${flick})`);
     c.restore();
+    p.circle(cx + dx, cy + dy, r * 0.45, '#d8ffe0');
+    p.circle(cx + dx - r * 0.35, cy + dy - r * 0.35, r * 0.18, '#ffffff');
   }
-  c.save(); c.translate(grip.x, grip.y); c.rotate(ang);
-  figGun(c, wid);
-  c.restore();
-  figGlove(c, K, gripHand.x, gripHand.y, ang + Math.PI / 2, eod);
-  figGlove(c, K, foreHand.x, foreHand.y, ang + (pistol ? 0.4 : Math.PI / 2), eod);
 }
 
-/** Плоский портрет — запасной, когда в браузере нет WebGL. */
-function drawArsenalFigure2D() {
+/** Сапёрный шлем: круглый, с широким забралом и вентиляцией. */
+function agentBombHelmet(c, p, look, t) {
+  p.path('M298,196 Q340,180 382,196 L376,160 Q340,150 304,160 Z', '#566a92', AG.ink, 4);   // воротник
+  p.ellipse(340, 118, 50, 56, '#4a5a80', AG.ink, 4);
+  p.path('M306,112 Q340,94 374,112 L372,146 Q340,160 308,146 Z', '#1d3a4c', AG.ink2, 4);
+  p.path('M314,114 Q330,104 346,106', null, 'rgba(180,220,255,.55)', 3);
+  for (const x of [292, 388]) p.circle(x, 124, 7, AG.darker, AG.ink2, 2);
+  p.rect(326, 60, 28, 14, 4, AG.belt, AG.ink, 2.5);
+  agentOptic(c, p, look, t, 340, 96);
+}
+
+/* ── Кадр ─────────────────────────────────────────────────────────────── */
+function drawArsenalFigure() {
   const cv = $('arsenalCanvas');
   const dpr = FIGURE.DPR();
-  // Холст в плотности экрана: на ретине иначе портрет выходит мыльным.
+  // Холст в плотности экрана: на ретине иначе рисунок выходит мыльным.
   if (cv.width !== FIGURE.W * dpr || cv.height !== FIGURE.H * dpr) {
     cv.width = FIGURE.W * dpr; cv.height = FIGURE.H * dpr;
     arsenalCtx = null;
   }
   if (!arsenalCtx) arsenalCtx = cv.getContext('2d');
   const c = arsenalCtx;
-  if (!c) return;                      // холст уже занят WebGL, который не завёлся
-  const W = FIGURE.W, H = FIGURE.H;
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  c.clearRect(0, 0, W, H);
-
+  if (!c) return;
   const t = performance.now() / 1000;
   const look = figureLook();
-  const K = CT_KIT;
+  const V = FIGURE.VIEW;
 
-  c.save();
-  c.translate(W / 2, FIGURE.GROUND);
-  // Подиум и тень под ногами.
-  const pod = c.createRadialGradient(0, 0, 10, 0, 0, 110);
-  pod.addColorStop(0, 'rgba(84,168,255,.16)'); pod.addColorStop(1, 'rgba(84,168,255,0)');
-  c.fillStyle = pod;
-  c.beginPath(); c.ellipse(0, 0, 110, 22, 0, 0, TAU); c.fill();
-  c.strokeStyle = 'rgba(84,168,255,.22)'; c.lineWidth = 1.2;
-  c.beginPath(); c.ellipse(0, 0, 96, 17, 0, 0, TAU); c.stroke();
-  c.fillStyle = 'rgba(0,0,0,.45)';
-  c.beginPath(); c.ellipse(0, -1, 52, 8, 0, 0, TAU); c.fill();
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  c.clearRect(0, 0, cv.width, cv.height);
+  const bg = agentBackground(dpr);
+  if (bg && c.drawImage) c.drawImage(bg, 0, 0);
+  c.setTransform(dpr * V.s, 0, 0, dpr * V.s, -V.x * dpr * V.s, -V.y * dpr * V.s);
+  const p = agentPen(c);
 
-  // Едва заметно покачивается и дышит: стоит живой человек, а не манекен.
-  c.rotate(Math.sin(t * 0.55) * 0.008);
-  figLegs(c, K, look);
-  figHolster(c, K, look);
-  const breath = (Math.sin(t * 1.7) + 1) * 0.7;
+  // Тень и синий обод подиума.
+  p.ellipse(340, 672, 95, 15, '#454b3e');
+  p.path('M250,690 A100,22 0 0 0 440,688', null, AG.blue, 5);
+  agentLegs(p, look);
+  agentBoots(p);
+  agentHolster(p, look);
+  // Корпус чуть дышит: всё выше пояса приподнимается на долю точки.
   c.save();
-  c.translate(0, -breath);
-  figTorso(c, K, look);
-  figVest(c, K, look);
-  if (look.knife && look.armor === 'none') figKnife(c, 30, -176, 0.2);   // без жилета — на поясе
-  figHead(c, K, look, t);
-  figArmsAndGun(c, K, look);
-  figPauldrons(c, look);
-  c.restore();
+  c.translate(0, -Math.max(0, Math.sin(t * 1.7)) * 1.4);
+  agentTorso(p, look);
+  agentVest(p, look);
+  agentBelt(p, look);
+  agentArms(p, look);
+  agentHeavy(p, look);
+  agentGun(c, p, look.inHands);
+  agentGloves(p);
+  agentHead(c, p, look, t);
   c.restore();
 
-  c.fillStyle = 'rgba(232,238,246,.55)';
+  // Подпись сверху, на тёмной полосе эскиза — внизу её закрыли бы ботинки.
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.fillStyle = 'rgba(232,238,246,.85)';
   c.font = '600 10px ui-monospace, Menlo, monospace';
   c.textAlign = 'center';
   const armor = armorOf(progress.armorEquipped);
   c.fillText(`${WEAPONS[look.inHands].name.toUpperCase()} · ${armor ? armor.name.toUpperCase() : 'БЕЗ БРОНИ'}`,
-             W / 2, H - 14);
+             FIGURE.W / 2, 18);
 }
 
-/* ═══ 3D-НАЧАЛО ═══ */
-/* ═══════════════════════════════════════════════════════════════════════════
-   3D В АРСЕНАЛЕ — трёхмерный боец и стволы.
-   Маленький WebGL-рендер без библиотек. Модели собираются кодом из объёмных
-   деталей в метрах: боец ростом 1,8 м, стволы в натуральную величину. Сборка
-   (buildSoldier, buildGun) — чистые функции, их проверяют тесты без браузера;
-   WebGL нужен только для показа. Нет WebGL — остаётся плоский портрет.
-   ═══════════════════════════════════════════════════════════════════════════ */
-
-// ── Векторы и матрицы 4×4 (по столбцам, как ждёт WebGL) ──────────────────
-const V3 = {
-  add: (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]],
-  sub: (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]],
-  mul: (a, k) => [a[0] * k, a[1] * k, a[2] * k],
-  dot: (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2],
-  cross: (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]],
-  len: a => Math.hypot(a[0], a[1], a[2]),
-  norm(a) { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; },
-  lerp: (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t],
-};
-
-const M4 = {
-  id: () => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1],
-  mul(a, b) {
-    const o = new Array(16);
-    for (let c = 0; c < 4; c++)
-      for (let r = 0; r < 4; r++) {
-        let s = 0;
-        for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k];
-        o[c * 4 + r] = s;
-      }
-    return o;
-  },
-  chain: (...ms) => ms.reduce((a, b) => M4.mul(a, b)),
-  t: (x, y, z) => [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, y, z, 1],
-  s: (x, y = x, z = x) => [x, 0, 0, 0, 0, y, 0, 0, 0, 0, z, 0, 0, 0, 0, 1],
-  rx(a) { const c = Math.cos(a), s = Math.sin(a); return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1]; },
-  ry(a) { const c = Math.cos(a), s = Math.sin(a); return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1]; },
-  rz(a) { const c = Math.cos(a), s = Math.sin(a); return [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]; },
-  persp(fov, asp, n, f) {
-    const t = 1 / Math.tan(fov / 2);
-    return [t / asp, 0, 0, 0, 0, t, 0, 0, 0, 0, (f + n) / (n - f), -1, 0, 0, 2 * f * n / (n - f), 0];
-  },
-  lookAt(e, c, up) {
-    const z = V3.norm(V3.sub(e, c)), x = V3.norm(V3.cross(up, z)), y = V3.cross(z, x);
-    return [x[0], y[0], z[0], 0, x[1], y[1], z[1], 0, x[2], y[2], z[2], 0,
-            -V3.dot(x, e), -V3.dot(y, e), -V3.dot(z, e), 1];
-  },
-  /** Поворот, при котором ось `axis` детали ('x' или 'y') смотрит по dir, а
-   *  соседняя ось — как можно ближе к up. Стволы строятся вдоль x, конечности — вдоль y. */
-  aim(pos, dir, up = [0, 1, 0], axis = 'y') {
-    const a = V3.norm(dir);
-    let u = V3.sub(up, V3.mul(a, V3.dot(up, a)));
-    if (V3.len(u) < 1e-4) u = Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 0, 1];
-    u = V3.norm(u);
-    const w = V3.cross(a, u);
-    // axis = 'x': x→a, y→u, z→w.  axis = 'y': y→a, z→u, x→(u×a).
-    const [X, Y, Z] = axis === 'x' ? [a, u, w] : [V3.cross(a, u), a, u];
-    return [X[0], X[1], X[2], 0, Y[0], Y[1], Y[2], 0, Z[0], Z[1], Z[2], 0, pos[0], pos[1], pos[2], 1];
-  },
-  point: (m, p) => [m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12],
-                    m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13],
-                    m[2] * p[0] + m[6] * p[1] + m[10] * p[2] + m[14]],
-  dir: (m, p) => [m[0] * p[0] + m[4] * p[1] + m[8] * p[2],
-                  m[1] * p[0] + m[5] * p[1] + m[9] * p[2],
-                  m[2] * p[0] + m[6] * p[1] + m[10] * p[2]],
-};
-
-/* ── Построители сеток ────────────────────────────────────────────────────
-   Сетка — плоские массивы треугольников: позиции p и нормали n. Всё в
-   метрах; матрицы деталей только поворачивают и переносят, не масштабируют,
-   поэтому процедурная текстура везде одного размера. */
-const mesh = () => ({ p: [], n: [] });
-function tri(m, a, na, b, nb, c, nc) {
-  m.p.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
-  m.n.push(na[0], na[1], na[2], nb[0], nb[1], nb[2], nc[0], nc[1], nc[2]);
-}
-function quad(m, a, na, b, nb, c, nc, d, nd) { tri(m, a, na, b, nb, c, nc); tri(m, a, na, c, nc, d, nd); }
-
-/** Сетка из решётки точек: P[v][u] и N[v][u]; wrap — замкнуть по u. */
-function gridMesh(P, N, wrap) {
-  const m = mesh();
-  const nv = P.length, nu = P[0].length;
-  const uMax = wrap ? nu : nu - 1;
-  for (let v = 0; v < nv - 1; v++)
-    for (let u = 0; u < uMax; u++) {
-      const u2 = (u + 1) % nu;
-      quad(m, P[v][u], N[v][u], P[v][u2], N[v][u2], P[v + 1][u2], N[v + 1][u2], P[v + 1][u], N[v + 1][u]);
-    }
-  return m;
+/* ── Фото стволов на карточках ───────────────────────────────────────────
+   Wikimedia Commons, фон вырезан (tools/cutout-weapons.py). Подгружаются
+   скриптом при первом открытии арсенала — запуск игры не ждёт 1,2 МБ. */
+let weaponPhotosState = 'idle';
+function loadWeaponPhotos() {
+  if (weaponPhotosState !== 'idle' || !document.head || !document.createElement) return;
+  weaponPhotosState = 'loading';
+  const el = document.createElement('script');
+  el.src = 'assets/weapon-photos.js';
+  el.onload = () => { weaponPhotosState = 'ready'; if (arsenalOpen()) renderArsenal(); };
+  el.onerror = () => { weaponPhotosState = 'failed'; };
+  document.head.appendChild(el);
 }
 
-/** Тело вращения вокруг оси Y по профилю [[r, y], ...] снизу вверх.
- *  sx, sz сплющивают в овал. Повтор точки в профиле — острое ребро. */
-function lathe(profile, seg = 24, sx = 1, sz = 1) {
-  const n = profile.length;
-  const same = (a, b) => a && b && a[0] === b[0] && a[1] === b[1];
-  const nrm2 = profile.map((p, i) => {
-    // Повтор точки — ребро: первая копия берёт нормаль прежнего отрезка,
-    // вторая — следующего. Берём первый отрезок ненулевой длины.
-    const cands = same(p, profile[i + 1]) ? [[i - 1, i], [i + 1, i + 2]]
-      : same(p, profile[i - 1]) ? [[i, i + 1], [i - 2, i - 1]]
-      : [[i - 1, i + 1], [i, i + 1], [i - 1, i]];
-    for (const [ia, ib] of cands) {
-      const a = profile[ia], b = profile[ib];
-      if (!a || !b) continue;
-      const dr = b[0] - a[0], dy = b[1] - a[1], l = Math.hypot(dr, dy);
-      if (l > 1e-9) return [dy / l, -dr / l];
-    }
-    return [0, 1];
-  });
-  const P = [], N = [];
-  for (let i = 0; i < n; i++) {
-    const [r, y] = profile[i], [nr, ny] = nrm2[i];
-    const rowP = [], rowN = [];
-    for (let k = 0; k < seg; k++) {
-      const a = (k / seg) * Math.PI * 2, c = Math.cos(a), s = Math.sin(a);
-      rowP.push([r * c * sx, y, r * s * sz]);
-      rowN.push(V3.norm([nr * c / sx, ny, nr * s / sz]));
-    }
-    P.push(rowP); N.push(rowN);
-  }
-  return gridMesh(P, N, true);
-}
-
-/** Профиль полукруга для сфер и полусфер. */
-function arcProfile(r, y0, a0, a1, steps) {
-  const out = [];
-  for (let i = 0; i <= steps; i++) {
-    const a = a0 + (a1 - a0) * (i / steps);
-    out.push([Math.max(0, Math.cos(a) * r), y0 + Math.sin(a) * r]);
-  }
-  return out;
-}
-
-function sphere(r, seg = 20, rings = 12, sx = 1, sy = 1, sz = 1) {
-  const prof = arcProfile(r, 0, -Math.PI / 2, Math.PI / 2, rings).map(([x, y]) => [x, y * sy]);
-  return lathe(prof, seg, sx, sz);
-}
-
-/** Цилиндр по оси Y от y0 до y1 с фасками: торцы тоже закрыты. */
-function cyl(r0, r1, h, seg = 18, bevel = 0.15) {
-  const b0 = Math.min(r0 * bevel, h * 0.25), b1 = Math.min(r1 * bevel, h * 0.25);
-  return lathe([[0, 0], [0, 0], [r0 - b0, 0], [r0, b0], [r1, h - b1], [r1 - b1, h], [0, h], [0, h]], seg);
-}
-
-/** Капсула-конечность вдоль Y длиной L: радиусы у концов и «мышца» посередине. */
-function limbMesh(L, ra, rb, bulge = 0, seg = 16) {
-  const prof = [];
-  for (let i = 0; i <= 5; i++) {                                     // нижняя полусфера
-    const a = -Math.PI / 2 + (i / 5) * (Math.PI / 2);
-    prof.push([Math.cos(a) * ra, Math.sin(a) * ra]);
-  }
-  for (let i = 1; i < 8; i++) {
-    const t = i / 8;
-    prof.push([(ra + (rb - ra) * t) * (1 + bulge * Math.sin(Math.PI * t)), t * L]);
-  }
-  for (let i = 0; i <= 5; i++) {                                     // верхняя полусфера
-    const a = (i / 5) * (Math.PI / 2);
-    prof.push([Math.cos(a) * rb, L + Math.sin(a) * rb]);
-  }
-  return lathe(prof, seg);
-}
-
-function torus(R, r, seg = 22, rseg = 10) {
-  const prof = [];
-  for (let i = 0; i <= rseg; i++) {
-    const a = -Math.PI / 2 + (i / rseg) * Math.PI * 2;
-    prof.push([R + Math.cos(a) * r, Math.sin(a) * r]);
-  }
-  return lathe(prof, seg);
-}
-
-/** Коробка со скруглёнными рёбрами w×h×d и радиусом r. Точки гуще у рёбер,
- *  чтобы скругление было гладким и ловило блик. */
-function rbox(w, h, d, r = 0.004) {
-  const m = mesh();
-  const a = [w / 2, h / 2, d / 2];
-  r = Math.min(r, a[0] * 0.95, a[1] * 0.95, a[2] * 0.95);
-  const inner = a.map(v => v - r);
-  const samples = e => {
-    const edge = [0, 0.15, 0.4, 0.7, 1].map(t => r * t);
-    const lo = edge.map(o => -e + o), hi = edge.map(o => e - o).reverse();
-    return [...lo, ...hi].filter((v, i, arr) => i === 0 || v > arr[i - 1] + 1e-7);
-  };
-  const place = q => {
-    const c = [Math.max(-inner[0], Math.min(inner[0], q[0])),
-               Math.max(-inner[1], Math.min(inner[1], q[1])),
-               Math.max(-inner[2], Math.min(inner[2], q[2]))];
-    const dvec = V3.norm(V3.sub(q, c));
-    return [V3.add(c, V3.mul(dvec, r)), dvec];
-  };
-  // Шесть граней: ось нормали и две оси по грани.
-  const faces = [[0, 1, 2], [1, 2, 0], [2, 0, 1]];
-  for (const [axis, uA, vA] of faces)
-    for (const sgn of [1, -1]) {
-      const us = samples(a[uA]), vs = samples(a[vA]);
-      const P = [], N = [];
-      for (const v of vs) {
-        const rowP = [], rowN = [];
-        for (const u of us) {
-          const q = [0, 0, 0];
-          q[axis] = sgn * a[axis]; q[uA] = u; q[vA] = v;
-          const [p, n] = place(q);
-          rowP.push(p); rowN.push(n);
-        }
-        P.push(rowP); N.push(rowN);
-      }
-      const g = gridMesh(P, N, false);
-      m.p.push(...g.p); m.n.push(...g.n);
-    }
-  return m;
-}
-
-/** Разрез многоугольника на треугольники «отрезанием ушей». */
-function earcut2(poly) {
-  const pts = poly.slice();
-  let area = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const a = pts[i], b = pts[(i + 1) % pts.length];
-    area += a[0] * b[1] - b[0] * a[1];
-  }
-  const idx = pts.map((_, i) => i);
-  if (area < 0) idx.reverse();
-  const out = [];
-  const inTri = (p, a, b, c) => {
-    const s = (p1, p2, p3) => (p1[0] - p3[0]) * (p2[1] - p3[1]) - (p2[0] - p3[0]) * (p1[1] - p3[1]);
-    const d1 = s(p, a, b), d2 = s(p, b, c), d3 = s(p, c, a);
-    return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
-  };
-  let guard = 0;
-  while (idx.length > 3 && guard++ < 2000) {
-    let cut = false;
-    for (let i = 0; i < idx.length; i++) {
-      const i0 = idx[(i + idx.length - 1) % idx.length], i1 = idx[i], i2 = idx[(i + 1) % idx.length];
-      const a = pts[i0], b = pts[i1], c = pts[i2];
-      if ((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]) <= 0) continue;
-      if (idx.some(j => j !== i0 && j !== i1 && j !== i2 && inTri(pts[j], a, b, c))) continue;
-      out.push([i0, i1, i2]);
-      idx.splice(i, 1);
-      cut = true;
-      break;
-    }
-    if (!cut) break;
-  }
-  if (idx.length === 3) out.push([idx[0], idx[1], idx[2]]);
-  return out;
-}
-
-/** Плоский профиль [[x, y], ...] выдавлен на толщину depth по Z с фаской:
- *  так делаются приклады, рукояти, магазины. */
-function extrude(poly, depth, bevel = 0.0025) {
-  const m = mesh();
-  const n = poly.length;
-  const hz = depth / 2;
-  // Внутренний контур для фаски: сдвиг к центру тяжести.
-  const cx = poly.reduce((s, p) => s + p[0], 0) / n, cy = poly.reduce((s, p) => s + p[1], 0) / n;
-  const inset = poly.map(([x, y]) => {
-    const dx = cx - x, dy = cy - y, l = Math.hypot(dx, dy) || 1;
-    const k = Math.min(bevel, l * 0.4);
-    return [x + dx / l * k, y + dy / l * k];
-  });
-  const tris = earcut2(inset);
-  for (const sgn of [1, -1]) {
-    const nz = [0, 0, sgn];
-    for (const [i, j, k] of tris) {
-      const P = [i, j, k].map(t => [inset[t][0], inset[t][1], sgn * hz]);
-      tri(m, P[0], nz, P[1], nz, P[2], nz);
-    }
-  }
-  // Борта: внешний контур по середине толщины, фаски к внутренним контурам.
-  let area = 0;
-  for (let i = 0; i < n; i++) area += poly[i][0] * poly[(i + 1) % n][1] - poly[(i + 1) % n][0] * poly[i][1];
-  const out = area > 0 ? 1 : -1;
-  for (let i = 0; i < n; i++) {
-    const a = poly[i], b = poly[(i + 1) % n], ai = inset[i], bi = inset[(i + 1) % n];
-    const ex = b[0] - a[0], ey = b[1] - a[1], l = Math.hypot(ex, ey) || 1;
-    const sn = [out * ey / l, -out * ex / l, 0];
-    const zf = hz - bevel;
-    quad(m, [a[0], a[1], -zf], sn, [b[0], b[1], -zf], sn, [b[0], b[1], zf], sn, [a[0], a[1], zf], sn);
-    for (const sgn of [1, -1]) {
-      const fn = V3.norm([sn[0], sn[1], sgn]);
-      quad(m, [a[0], a[1], sgn * zf], fn, [b[0], b[1], sgn * zf], fn,
-           [bi[0], bi[1], sgn * hz], fn, [ai[0], ai[1], sgn * hz], fn);
-    }
-  }
-  return m;
-}
-
-/** Трубка по ломаной (сглаживается): шланги, кабели, антенны, ремни. */
-function tube(points, r, seg = 10, steps = 6) {
-  const cr = (p0, p1, p2, p3, t) => {
-    const t2 = t * t, t3 = t2 * t;
-    return [0, 1, 2].map(i => 0.5 * ((2 * p1[i]) + (-p0[i] + p2[i]) * t +
-      (2 * p0[i] - 5 * p1[i] + 4 * p2[i] - p3[i]) * t2 + (-p0[i] + 3 * p1[i] - 3 * p2[i] + p3[i]) * t3));
-  };
-  const path = [];
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[Math.max(0, i - 1)], p1 = points[i], p2 = points[i + 1], p3 = points[Math.min(points.length - 1, i + 2)];
-    for (let s = 0; s < steps; s++) path.push(cr(p0, p1, p2, p3, s / steps));
-  }
-  path.push(points[points.length - 1]);
-  let up = [0, 1, 0];
-  const P = [], N = [];
-  for (let i = 0; i < path.length; i++) {
-    const t = V3.norm(V3.sub(path[Math.min(path.length - 1, i + 1)], path[Math.max(0, i - 1)]));
-    let u = V3.sub(up, V3.mul(t, V3.dot(up, t)));
-    if (V3.len(u) < 1e-4) u = Math.abs(t[0]) < 0.9 ? [1, 0, 0] : [0, 0, 1];
-    u = V3.norm(u); up = u;
-    const w = V3.cross(t, u);
-    const rowP = [], rowN = [];
-    for (let k = 0; k < seg; k++) {
-      const a = (k / seg) * Math.PI * 2;
-      const nn = V3.add(V3.mul(u, Math.cos(a)), V3.mul(w, Math.sin(a)));
-      rowP.push(V3.add(path[i], V3.mul(nn, r))); rowN.push(nn);
-    }
-    P.push(rowP); N.push(rowN);
-  }
-  return gridMesh(P, N, true);
-}
-
-/** Супер-эллиптический «лофт» по кольцам [{y, rx, rz, z, e}] — корпус,
- *  жилеты, воротники. e = 2 — эллипс, больше — квадратнее. Кольца
- *  сглаживаются сплайном, нормали считаются по соседним точкам. */
-function loft(rings, seg = 28, sub = 3, capBottom = true, capTop = true) {
-  const R = [];
-  const lerpRing = (a, b, t) => ({ y: a.y + (b.y - a.y) * t, rx: a.rx + (b.rx - a.rx) * t, rz: a.rz + (b.rz - a.rz) * t,
-                                   z: (a.z || 0) + ((b.z || 0) - (a.z || 0)) * t, e: (a.e || 2) + ((b.e || 2) - (a.e || 2)) * t });
-  for (let i = 0; i < rings.length - 1; i++)
-    for (let s = 0; s < sub; s++) {
-      const t = s / sub;
-      const sm = t * t * (3 - 2 * t);
-      R.push(lerpRing(rings[i], rings[i + 1], (t + sm) / 2));
-    }
-  R.push(lerpRing(rings[rings.length - 1], rings[rings.length - 1], 0));
-  const pt = (ring, a) => {
-    const c = Math.cos(a), s = Math.sin(a), e = ring.e || 2;
-    const px = Math.sign(c) * Math.pow(Math.abs(c), 2 / e) * ring.rx;
-    const pz = Math.sign(s) * Math.pow(Math.abs(s), 2 / e) * ring.rz + (ring.z || 0);
-    return [px, ring.y, pz];
-  };
-  const P = R.map(ring => Array.from({ length: seg }, (_, k) => pt(ring, (k / seg) * Math.PI * 2)));
-  const N = P.map((row, v) => row.map((p, u) => {
-    const du = V3.sub(row[(u + 1) % seg], row[(u + seg - 1) % seg]);
-    const dv = V3.sub(P[Math.min(P.length - 1, v + 1)][u], P[Math.max(0, v - 1)][u]);
-    return V3.norm(V3.cross(dv, du));
-  }));
-  const m = gridMesh(P, N, true);
-  const cap = (row, y, up) => {
-    const c = [row.reduce((s, p) => s + p[0], 0) / seg, y, row.reduce((s, p) => s + p[2], 0) / seg];
-    const nn = [0, up ? 1 : -1, 0];
-    for (let k = 0; k < seg; k++) tri(m, c, nn, row[k], nn, row[(k + 1) % seg], nn);
-  };
-  if (capBottom) cap(P[0], R[0].y, false);
-  if (capTop) cap(P[P.length - 1], R[R.length - 1].y, true);
-  return m;
-}
-
-/* ── Материалы ────────────────────────────────────────────────────────────
-   Номер материала уходит в шейдер, и тот сам рисует текстуру: ткань в
-   рип-стоп клетку, кордуру, зернистый полимер, воронёный металл, дерево,
-   резину, стекло, германий тепловизора и светящийся люминофор. */
-const MAT = {
-  fabric: 0, nylon: 1, polymer: 2, metal: 3, wood: 4, rubber: 5, glass: 6, glow: 7,
-  germanium: 8, plate: 9, grille: 10, floor: 11, knit: 12, leather: 13, concrete: 14,
-};
-
-const hexRgb = h => { const n = parseInt(h.slice(1, 7), 16); return [(n >> 16) / 255, ((n >> 8) & 255) / 255, (n & 255) / 255]; };
-
-/** Деталь модели: сетка, материал, цвет, положение. ls — во сколько раз
- *  растянуть локальные координаты для текстуры (у линз — чтобы свечение
- *  шло от центра к краю). */
-function part(meshObj, mat, col, m = M4.id(), ls = 1) { return { mesh: meshObj, mat, col, m, ls }; }
-
-/** Все детали — в один буфер: позиция, нормаль, цвет, материал, локальная
- *  позиция и локальная нормаль (по ним шейдер кладёт текстуру). */
-const R3D_STRIDE = 16;
-function bakeParts(parts) {
-  let count = 0;
-  for (const pt of parts) count += pt.mesh.p.length / 3;
-  const out = new Float32Array(count * R3D_STRIDE);
-  let o = 0;
-  for (const pt of parts) {
-    const { p, n } = pt.mesh, m = pt.m, col = hexRgb(pt.col);
-    for (let i = 0; i < p.length; i += 3) {
-      const lp = [p[i], p[i + 1], p[i + 2]], ln = [n[i], n[i + 1], n[i + 2]];
-      const wp = M4.point(m, lp), wn = M4.dir(m, ln);
-      out.set(wp, o); out.set(wn, o + 3); out.set(col, o + 6);
-      out[o + 9] = pt.mat;
-      out[o + 10] = lp[0] * pt.ls; out[o + 11] = lp[1] * pt.ls; out[o + 12] = lp[2] * pt.ls;
-      out[o + 13] = ln[0]; out[o + 14] = ln[1]; out[o + 15] = ln[2];
-      o += R3D_STRIDE;
-    }
-  }
-  return out;
-}
-
-const R3D_VS = `
-attribute vec3 aP, aN, aC, aL, aLN; attribute float aM;
-uniform mat4 uModel, uView, uProj, uLightVP;
-varying vec3 vW, vO, vON, vC, vL, vLN; varying float vM; varying vec4 vLS;
-void main() {
-  vec4 w = uModel * vec4(aP, 1.0);
-  vW = w.xyz; vO = aP; vON = aN; vC = aC; vL = aL; vLN = aLN; vM = aM;
-  vLS = uLightVP * w;
-  gl_Position = uProj * uView * w;
-}`;
-
-// Общие для шейдеров шум и рельеф. Рельеф считается в координатах модели,
-// поэтому складки и зерно не «плывут», пока боец вращается.
-const R3D_NOISE = `
-float h3(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-float noise(vec3 x) {
-  vec3 i = floor(x), f = fract(x); f = f * f * (3.0 - 2.0 * f);
-  return mix(mix(mix(h3(i), h3(i + vec3(1,0,0)), f.x), mix(h3(i + vec3(0,1,0)), h3(i + vec3(1,1,0)), f.x), f.y),
-             mix(mix(h3(i + vec3(0,0,1)), h3(i + vec3(1,0,1)), f.x), mix(h3(i + vec3(0,1,1)), h3(i + vec3(1,1,1)), f.x), f.y), f.z);
-}
-float fbm(vec3 p) { float a = 0.5, s = 0.0; for (int i = 0; i < 4; i++) { s += a * noise(p); p *= 2.07; a *= 0.5; } return s; }
-`;
-
-const R3D_FS = `
-#ifdef GL_OES_standard_derivatives
-#extension GL_OES_standard_derivatives : enable
-#endif
-precision highp float;
-varying vec3 vW, vO, vON, vC, vL, vLN; varying float vM; varying vec4 vLS;
-uniform mat4 uModel;
-uniform vec3 uEye; uniform float uTime, uAlpha, uGround, uShadowOn, uFog;
-uniform sampler2D uShadow;
-${R3D_NOISE}
-vec2 planar(vec3 p, vec3 n) {
-  vec3 a = abs(n);
-  if (a.x > a.y && a.x > a.z) return p.zy;
-  if (a.y > a.z) return p.xz;
-  return p.xy;
-}
-float lineGrid(vec2 uv, float cell, float w) {
-  vec2 g = abs(fract(uv / cell) - 0.5);
-  return 1.0 - smoothstep(0.5 - w, 0.5, max(g.x, g.y));
-}
-// Высота рельефа по материалу: складки ткани, плетение, зерно, шлифовка.
-float bumpH(vec3 p, float m) {
-  if (m < 0.5) return fbm(vec3(p.x * 4.0, p.y * 16.0, p.z * 4.0)) * 0.6 + fbm(p * 35.0) * 0.08;   // ткань: вытянутые складки
-  if (m < 1.5) return fbm(p * 14.0) * 0.3 + noise(p * 110.0) * 0.06;                              // нейлон
-  if (m < 2.5) return noise(p * 150.0) * 0.2;                                                     // полимер: зерно
-  if (m < 3.5) return noise(vec3(p.x * 20.0, p.y * 300.0, p.z * 300.0)) * 0.15;                   // металл
-  if (m < 5.5 && m > 4.5) return noise(p * 120.0) * 0.3;                                          // резина
-  if (m > 8.5 && m < 9.5) return fbm(p * 25.0) * 0.35;                                            // пластина
-  if (m > 11.5 && m < 12.5) return fbm(p * 40.0) * 0.3;                                           // вязка
-  if (m > 12.5 && m < 13.5) return fbm(p * 60.0) * 0.35;                                          // кожа
-  if (m > 13.5) return fbm(p * 5.0) * 0.5 + noise(p * 90.0) * 0.12;                               // бетон
-  return 0.0;
-}
-// Сила рельефа подобрана так, что нормаль отклоняется на 10–15°: заметно, но без мусора.
-float bumpK(float m) {
-  if (m < 0.5) return 0.014; if (m < 1.5) return 0.01; if (m < 2.5) return 0.004; if (m < 3.5) return 0.003;
-  if (m < 4.5) return 0.0; if (m < 5.5) return 0.005; if (m > 8.5 && m < 9.5) return 0.012;
-  if (m > 11.5 && m < 12.5) return 0.004; if (m > 12.5 && m < 13.5) return 0.006; if (m > 13.5) return 0.012;
-  return 0.0;
-}
-float unpack(vec4 c) { return dot(c, vec4(1.0, 1.0 / 255.0, 1.0 / 65025.0, 1.0 / 16581375.0)); }
-float shadowAt(vec4 ls) {
-  vec3 p = ls.xyz / ls.w * 0.5 + 0.5;
-  if (p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
-  float lit = 0.0;
-  for (int x = -1; x <= 1; x++)
-    for (int y = -1; y <= 1; y++)
-      lit += step(p.z - 0.003, unpack(texture2D(uShadow, p.xy + vec2(float(x), float(y)) / 1024.0)));
-  return lit / 9.0;
-}
-void main() {
-  float m = floor(vM + 0.5);
-  // Нормаль с рельефом: градиент высоты в координатах модели.
-  vec3 nO = normalize(vON);
-  float k = bumpK(m);
-  if (k > 0.0) {
-    float e = 0.0015;
-    float h0 = bumpH(vO, m);
-    vec3 g = vec3(bumpH(vO + vec3(e, 0, 0), m) - h0, bumpH(vO + vec3(0, e, 0), m) - h0, bumpH(vO + vec3(0, 0, e), m) - h0) / e;
-    nO = normalize(nO - k * (g - dot(g, nO) * nO));
-  }
-  vec3 n = normalize(mat3(uModel) * nO);
-  vec3 v = normalize(uEye - vW);
-  vec3 col = pow(vC, vec3(2.2));
-  vec2 uv = planar(vL, vLN);
-  float spec = 0.12, shin = 18.0, rim = 0.25, wearEdge = 0.0;
-  vec3 emis = vec3(0.0);
-  float curv = 0.0;
-#ifdef GL_OES_standard_derivatives
-  curv = clamp(length(fwidth(normalize(vN0()))) * 5.0, 0.0, 1.0);
-#endif
-  float mott = fbm(vO * 7.0);
-  float grime = fbm(vO * 3.0 + 7.3);
-  if (m < 0.5) {                                       // ткань: камуфляж, рип-стоп, грязь снизу
-    float c1 = fbm(vO * vec3(5.0, 3.2, 5.0) + 3.1), c2 = fbm(vO * vec3(8.0, 5.0, 8.0) + 11.7), c3 = fbm(vO * 14.0 + 5.3);
-    col = mix(col, col * 0.35, smoothstep(0.49, 0.52, c1));
-    col = mix(col, col * 1.9 + 0.01, smoothstep(0.57, 0.6, c2) * 0.9);
-    col = mix(col, col * 0.6, smoothstep(0.6, 0.63, c3) * 0.8);
-    float rip = lineGrid(uv, 0.02, 0.05);
-    col *= (0.82 + 0.28 * mott) * (1.0 - rip * 0.14);
-    col = mix(col, col * 0.55, smoothstep(0.45, 0.0, vW.y) * uGround * 0.6);
-    spec = 0.04; shin = 7.0; rim = 0.18;
-  } else if (m < 1.5) {                                // нейлон / кордура
-    col *= 0.75 + 0.4 * mott;
-    spec = 0.12; shin = 14.0; wearEdge = 0.15; rim = 0.15;
-  } else if (m < 2.5) {                                // полимер
-    col *= 0.85 + 0.25 * mott;
-    spec = 0.4; shin = 34.0; wearEdge = 0.6;
-  } else if (m < 3.5) {                                // воронёный металл
-    col *= 0.7 + 0.45 * noise(vec3(vL.x * 25.0, vL.y * 600.0, vL.z * 600.0));
-    spec = 1.3; shin = 70.0; wearEdge = 1.4;
-  } else if (m < 4.5) {                                // дерево
-    float grain = sin(vL.x * 180.0 + fbm(vL * vec3(6.0, 50.0, 50.0)) * 9.0);
-    col *= 0.65 + 0.25 * grain + 0.25 * mott;
-    spec = 0.55; shin = 45.0; wearEdge = 0.5;
-  } else if (m < 5.5) {                                // резина
-    col *= 0.8 + 0.3 * mott; spec = 0.05; shin = 6.0; rim = 0.12;
-  } else if (m < 6.5) {                                // стекло
-    vec3 r = reflect(-v, n);
-    col = mix(vec3(0.005, 0.01, 0.015), vec3(0.3, 0.5, 0.7), smoothstep(-0.1, 0.9, r.y)) + col * 0.25;
-    spec = 2.6; shin = 140.0; rim = 0.7;
-  } else if (m < 7.5) {                                // люминофор
-    float d = length(vL.xz);
-    float flick = 0.9 + 0.1 * sin(uTime * 11.0 + vO.x * 90.0);
-    emis = col * (1.4 + 6.0 * (1.0 - smoothstep(0.0, 0.95, d))) * flick;
-    emis += vec3(0.85, 1.0, 0.85) * (1.0 - smoothstep(0.0, 0.3, d)) * 2.0;
-    col *= 0.15; spec = 1.6; shin = 90.0;
-  } else if (m < 8.5) {                                // германий
-    float f = pow(1.0 - max(dot(n, v), 0.0), 2.0);
-    col = mix(vec3(0.04, 0.015, 0.1), vec3(0.8, 0.55, 0.12), f) + vec3(0.18, 0.04, 0.32) * (1.0 - f) * 0.45;
-    spec = 2.2; shin = 110.0;
-  } else if (m < 9.5) {                                // крашеная пластина, сколы
-    col *= 0.78 + 0.35 * mott;
-    spec = 0.35; shin = 26.0; wearEdge = 1.0;
-  } else if (m < 10.5) {                               // сетка
-    float holes = step(0.45, fract(uv.x * 240.0)) * step(0.45, fract(uv.y * 240.0));
-    col *= mix(1.0, 0.2, holes); spec = 0.5; shin = 40.0;
-  } else if (m < 11.5) {                               // подиум
-    float r = length(vW.xz);
-    float grid = lineGrid(vW.xz, 0.25, 0.02);
-    float ring = 1.0 - smoothstep(0.0, 0.012, abs(r - 0.8));
-    float ring2 = 1.0 - smoothstep(0.0, 0.006, abs(r - 0.64));
-    col = vec3(0.02, 0.025, 0.035) * (0.8 + 0.4 * fbm(vW * 6.0)) + vec3(0.025, 0.06, 0.12) * grid * (1.0 - smoothstep(0.3, 0.95, r));
-    emis = vec3(0.12, 0.38, 0.9) * (ring * 0.9 + ring2 * 0.4);
-    spec = 1.0; shin = 60.0; rim = 0.0;
-  } else if (m < 12.5) {                               // вязаная маска
-    col *= 0.75 + 0.35 * mott; spec = 0.03; shin = 5.0; rim = 0.1;
-  } else if (m < 13.5) {                               // кожа перчаток и ботинок
-    col *= 0.75 + 0.35 * mott; spec = 0.14; shin = 18.0; wearEdge = 0.3; rim = 0.08;
-  } else {                                             // бетон: пятна, затёртость, швы плит
-    float stains = fbm(vO * 1.6 + 2.0), wet = fbm(vO * 0.7);
-    col *= (0.7 + 0.45 * stains) * (1.0 - lineGrid(uv, 1.2, 0.012) * 0.45);
-    spec = 0.25 + 0.6 * smoothstep(0.55, 0.75, wet); shin = 40.0; rim = 0.05;
-  }
-  // Потёртые кромки и пыль в углублениях.
-  col = mix(col, col * 1.7 + 0.02, clamp(curv * wearEdge, 0.0, 0.6) * smoothstep(0.4, 0.62, mott));
-  col = mix(col, col * vec3(0.9, 0.85, 0.78) + vec3(0.02, 0.018, 0.014), smoothstep(0.55, 0.8, grime) * 0.3 * step(m, 9.5));
-
-  vec3 L1 = normalize(vec3(-0.55, 0.75, 0.65)), C1 = vec3(1.0, 0.9, 0.76) * 2.2;
-  vec3 L2 = normalize(vec3(0.75, 0.35, -0.75)), C2 = vec3(0.3, 0.6, 1.0) * 3.0;
-  vec3 L3 = normalize(vec3(0.8, 0.1, 0.6)),     C3 = vec3(0.35, 0.42, 0.55) * 0.45;
-  float sh = uShadowOn > 0.5 ? shadowAt(vLS) : 1.0;
-  vec3 hemi = mix(vec3(0.016, 0.017, 0.02), vec3(0.1, 0.11, 0.13), n.y * 0.5 + 0.5);
-  float ao = mix(1.0, mix(0.45, 1.0, smoothstep(0.0, 0.35, vW.y)), uGround);
-  vec3 c = col * hemi * ao;
-  c += col * C1 * max(dot(n, L1), 0.0) * sh;
-  c += col * C2 * max(dot(n, L2), 0.0) * 0.5;
-  c += col * C3 * max(dot(n, L3), 0.0) * ao;
-  c += C1 * spec * pow(max(dot(n, normalize(L1 + v)), 0.0), shin) * sh;
-  c += C2 * spec * pow(max(dot(n, normalize(L2 + v)), 0.0), shin) * 0.7;
-  c += vec3(0.22, 0.45, 1.0) * rim * pow(1.0 - max(dot(n, v), 0.0), 3.5);
-  if (m > 10.5 && m < 11.5) c *= mix(0.3, 1.0, sh);
-  c += emis;
-  // Дымка: чем дальше от камеры, тем глубже фон уходит в синий сумрак.
-  float fogK = smoothstep(3.4, 7.5, length(vW - uEye)) * uFog * 0.85;
-  c = mix(c, vec3(0.012, 0.02, 0.034), fogK);
-  c = (c * (2.51 * c + 0.03)) / (c * (2.43 * c + 0.59) + 0.14);
-  c = pow(clamp(c, 0.0, 1.0), vec3(1.0 / 2.2));
-  float a = uAlpha;
-  if (m > 10.5 && m < 11.5) a = uAlpha * (0.78 + 0.22 * smoothstep(0.2, 1.0, length(vW.xz)));
-  gl_FragColor = vec4(c * a, a);
-}`.replace('normalize(vN0())', 'normalize(mat3(uModel) * normalize(vON))');
-
-// Карта теней: глубина от ключевого света, упакованная в RGBA.
-const R3D_SHADOW_VS = `
-attribute vec3 aP; uniform mat4 uModel, uLightVP;
-void main() { gl_Position = uLightVP * uModel * vec4(aP, 1.0); }`;
-const R3D_SHADOW_FS = `
-precision highp float;
-void main() {
-  vec4 e = fract(gl_FragCoord.z * vec4(1.0, 255.0, 65025.0, 16581375.0));
-  gl_FragColor = e - e.yzww * vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
-}`;
-
-// Ореол линз и фон: квадрат, повёрнутый к камере, с мягким спадом.
-const R3D_SPRITE_VS = `
-attribute vec2 aQ;
-uniform vec3 uCenter; uniform float uSize; uniform mat4 uView, uProj; uniform float uFull;
-varying vec2 vQ;
-void main() {
-  vQ = aQ;
-  if (uFull > 0.5) { gl_Position = vec4(aQ, 0.999, 1.0); return; }
-  vec4 c = uView * vec4(uCenter, 1.0);
-  c.xy += aQ * uSize;
-  gl_Position = uProj * c;
-}`;
-const R3D_SPRITE_FS = `
-precision highp float;
-varying vec2 vQ; uniform vec3 uColor; uniform float uFull, uAspect;
-void main() {
-  if (uFull > 0.5) {
-    vec2 p = vQ * vec2(uAspect, 1.0) - vec2(0.0, 0.1);
-    float g = 1.0 - smoothstep(0.0, 1.5, length(p));
-    vec3 c = mix(vec3(0.016, 0.022, 0.032), vec3(0.06, 0.09, 0.135), g * g);
-    c += vec3(0.04, 0.09, 0.18) * pow(max(0.0, 1.0 - length(p - vec2(0.0, 0.6)) * 1.1), 3.0);
-    gl_FragColor = vec4(c, 1.0);
-    return;
-  }
-  float d = length(vQ);
-  float k = pow(max(0.0, 1.0 - d), 2.4);
-  gl_FragColor = vec4(uColor * k, 0.0);
-}`;
-
-M4.ortho = (l, r, b, t, n, f) => [2 / (r - l), 0, 0, 0, 0, 2 / (t - b), 0, 0, 0, 0, -2 / (f - n), 0,
-  -(r + l) / (r - l), -(t + b) / (t - b), -(f + n) / (f - n), 1];
-
-/** Рендер на одном холсте. Модели кэшируются по ключу: пересобираются,
- *  только когда меняется то, что надето. */
-class Arsenal3D {
-  constructor(canvas, { shadows = true, scene = false } = {}) {
-    const opts = { antialias: true, alpha: false, stencil: true, premultipliedAlpha: true, preserveDrawingBuffer: false };
-    const gl = canvas.getContext('webgl', opts) || canvas.getContext('experimental-webgl', opts);
-    if (!gl || typeof gl.createShader !== 'function') throw new Error('нет WebGL');
-    this.gl = gl; this.canvas = canvas;
-    gl.getExtension('OES_standard_derivatives');
-    this.prog = this.program(R3D_VS, R3D_FS);
-    this.sprite = this.program(R3D_SPRITE_VS, R3D_SPRITE_FS);
-    this.quad = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1]), gl.STATIC_DRAW);
-    this.models = new Map();
-    this.floor = this.upload(bakeParts([part(lathe([[0, -0.02], [0, 0], [0.97, 0], [0.97, -0.02]], 72), MAT.floor, '#0b111a')]));
-    this.shadow = shadows ? this.makeShadow(1024) : null;
-    this.scene = scene ? this.upload(bakeParts(buildArmory().parts)) : null;
-  }
-  makeShadow(size) {
-    const gl = this.gl;
-    const tex = gl.createTexture();
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    for (const [p, v] of [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST],
-                          [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, p, v);
-    const depth = gl.createRenderbuffer();
-    gl.bindRenderbuffer(gl.RENDERBUFFER, depth);
-    gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, size, size);
-    const fb = gl.createFramebuffer();
-    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
-    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depth);
-    const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    if (!ok) return null;
-    return { tex, fb, size, prog: this.program(R3D_SHADOW_VS, R3D_SHADOW_FS) };
-  }
-  program(vs, fs) {
-    const gl = this.gl;
-    const sh = (type, src) => {
-      const s = gl.createShader(type);
-      gl.shaderSource(s, src); gl.compileShader(s);
-      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s) || 'шейдер');
-      return s;
-    };
-    const p = gl.createProgram();
-    gl.attachShader(p, sh(gl.VERTEX_SHADER, vs)); gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fs));
-    gl.linkProgram(p);
-    if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || 'программа');
-    const loc = {};
-    const na = gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES), nu = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
-    for (let i = 0; i < na; i++) { const a = gl.getActiveAttrib(p, i); loc[a.name] = gl.getAttribLocation(p, a.name); }
-    for (let i = 0; i < nu; i++) { const u = gl.getActiveUniform(p, i); loc[u.name] = gl.getUniformLocation(p, u.name); }
-    return { p, loc };
-  }
-  upload(data) {
-    const gl = this.gl, buf = gl.createBuffer();
-    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
-    return { buf, count: data.length / R3D_STRIDE };
-  }
-  model(key, build) {
-    let m = this.models.get(key);
-    if (!m) {
-      const b = build();
-      m = { ...this.upload(bakeParts(b.parts)), halos: b.halos || [], bounds: b.bounds };
-      this.models.set(key, m);
-    }
-    return m;
-  }
-  /** Указать атрибуты программы на буфер модели; лишние — выключить. */
-  bindAttrs(prog, obj) {
-    const gl = this.gl, { loc } = prog;
-    for (let i = 0; i < 8; i++) gl.disableVertexAttribArray(i);
-    gl.bindBuffer(gl.ARRAY_BUFFER, obj.buf);
-    const F = 4, S = R3D_STRIDE * F;
-    const attr = (name, size, off) => {
-      if (loc[name] === undefined || loc[name] < 0) return;
-      gl.enableVertexAttribArray(loc[name]);
-      gl.vertexAttribPointer(loc[name], size, gl.FLOAT, false, S, off * F);
-    };
-    attr('aP', 3, 0); attr('aN', 3, 3); attr('aC', 3, 6); attr('aM', 1, 9); attr('aL', 3, 10); attr('aLN', 3, 13);
-  }
-  draw(obj, model, alpha = 1, ground = 1, shadowOn = 0) {
-    const gl = this.gl, { loc } = this.prog;
-    this.bindAttrs(this.prog, obj);
-    gl.uniformMatrix4fv(loc.uModel, false, new Float32Array(model));
-    gl.uniform1f(loc.uAlpha, alpha);
-    gl.uniform1f(loc.uGround, ground);
-    gl.uniform1f(loc.uShadowOn, shadowOn);
-    gl.drawArrays(gl.TRIANGLES, 0, obj.count);
-  }
-  /** Кадр: тени, фон, отражение на подиуме, подиум, модель, ореолы. */
-  frame(obj, model, cam, t, { floor = true } = {}) {
-    const gl = this.gl, c = this.canvas;
-    // Свет смотрит на бойца сверху-слева-спереди — как ключевой в шейдере.
-    const L = V3.norm([-0.55, 0.75, 0.65]);
-    const lightVP = M4.mul(M4.ortho(-1.1, 1.1, -1.2, 1.2, 0.5, 6), M4.lookAt(V3.add([0, 0.95, 0], V3.mul(L, 3)), [0, 0.95, 0], [0, 1, 0]));
-    const S = this.shadow && floor ? this.shadow : null;
-    if (S) {
-      gl.bindFramebuffer(gl.FRAMEBUFFER, S.fb);
-      gl.viewport(0, 0, S.size, S.size);
-      gl.clearColor(1, 1, 1, 1);
-      gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
-      gl.enable(gl.DEPTH_TEST); gl.disable(gl.BLEND);
-      gl.useProgram(S.prog.p);
-      this.bindAttrs(S.prog, obj);
-      gl.uniformMatrix4fv(S.prog.loc.uModel, false, new Float32Array(model));
-      gl.uniformMatrix4fv(S.prog.loc.uLightVP, false, new Float32Array(lightVP));
-      gl.drawArrays(gl.TRIANGLES, 0, obj.count);
-      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    }
-    gl.viewport(0, 0, c.width, c.height);
-    gl.clearColor(0.03, 0.04, 0.06, 1);
-    gl.clearStencil(0);
-    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT | gl.STENCIL_BUFFER_BIT);
-    const view = M4.lookAt(cam.eye, cam.at, [0, 1, 0]);
-    const proj = M4.persp(cam.fov, c.width / c.height, 0.05, 30);
-    this.useSprite(view, proj, c.width / c.height);
-    gl.disable(gl.DEPTH_TEST);
-    gl.uniform1f(this.sprite.loc.uFull, 1);
-    gl.drawArrays(gl.TRIANGLES, 0, 6);
-    gl.enable(gl.DEPTH_TEST);
-    gl.disable(gl.CULL_FACE);
-    const P = this.prog;
-    gl.useProgram(P.p);
-    gl.uniformMatrix4fv(P.loc.uView, false, new Float32Array(view));
-    gl.uniformMatrix4fv(P.loc.uProj, false, new Float32Array(proj));
-    gl.uniformMatrix4fv(P.loc.uLightVP, false, new Float32Array(lightVP));
-    gl.uniform3fv(P.loc.uEye, new Float32Array(cam.eye));
-    gl.uniform1f(P.loc.uTime, t);
-    gl.uniform1f(P.loc.uFog, this.scene ? 1 : 0);
-    if (S) {
-      gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, S.tex);
-      gl.uniform1i(P.loc.uShadow, 0);
-    }
-    // Оружейная вокруг: стены, стойки, ящики — неподвижны, боец вращается.
-    if (this.scene) this.draw(this.scene, M4.id(), 1, 0, S ? 1 : 0);
-    if (floor) {
-      // Отражение видно только на крышке подиума: её силуэт — в стенсил,
-      // глубину сцены сбрасываем, чтобы пол оружейной не прятал отражение.
-      gl.enable(gl.STENCIL_TEST);
-      gl.stencilFunc(gl.ALWAYS, 1, 0xff);
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.REPLACE);
-      gl.colorMask(false, false, false, false); gl.depthMask(false);
-      this.draw(this.floor, M4.id(), 1, 0, 0);
-      gl.colorMask(true, true, true, true); gl.depthMask(true);
-      gl.clear(gl.DEPTH_BUFFER_BIT);
-      gl.stencilFunc(gl.EQUAL, 1, 0xff);
-      gl.stencilOp(gl.KEEP, gl.KEEP, gl.KEEP);
-      gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
-      this.draw(obj, M4.mul(M4.s(1, -1, 1), model), 0.2, 0, 0);
-      gl.disable(gl.STENCIL_TEST);
-      this.draw(this.floor, M4.id(), 1, 0, S ? 1 : 0);
-      gl.disable(gl.BLEND);
-    }
-    this.draw(obj, model, 1, floor ? 1 : 0, S ? 1 : 0);
-    if (obj.halos.length) {
-      this.useSprite(view, proj, c.width / c.height);
-      gl.uniform1f(this.sprite.loc.uFull, 0);
-      gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
-      gl.depthMask(false);
-      for (const h of obj.halos) {
-        const w = M4.point(model, h.p);
-        const facing = V3.dot(V3.norm(M4.dir(model, h.d)), V3.norm(V3.sub(cam.eye, w)));
-        if (facing < 0.05) continue;
-        const flick = 0.85 + 0.15 * Math.sin(t * 11 + h.p[0] * 90);
-        gl.uniform3fv(this.sprite.loc.uCenter, new Float32Array(V3.add(w, V3.mul(M4.dir(model, h.d), 0.004))));
-        gl.uniform1f(this.sprite.loc.uSize, h.size * (0.7 + 0.3 * facing));
-        gl.uniform3fv(this.sprite.loc.uColor, new Float32Array(hexRgb(h.col).map(x => x * h.power * facing * flick)));
-        gl.drawArrays(gl.TRIANGLES, 0, 6);
-      }
-      gl.depthMask(true);
-      gl.disable(gl.BLEND);
-    }
-  }
-  useSprite(view, proj, aspect) {
-    const gl = this.gl, S = this.sprite;
-    gl.useProgram(S.p);
-    for (let i = 0; i < 8; i++) gl.disableVertexAttribArray(i);
-    gl.bindBuffer(gl.ARRAY_BUFFER, this.quad);
-    gl.enableVertexAttribArray(S.loc.aQ);
-    gl.vertexAttribPointer(S.loc.aQ, 2, gl.FLOAT, false, 0, 0);
-    gl.uniformMatrix4fv(S.loc.uView, false, new Float32Array(view));
-    gl.uniformMatrix4fv(S.loc.uProj, false, new Float32Array(proj));
-    gl.uniform1f(S.loc.uAspect, aspect);
-  }
-}
-
-/* ── Стволы ───────────────────────────────────────────────────────────────
-   Каждый ствол собирается из деталей по своим приметам. Пропорции — из
-   таблицы стволов боя (GUN_SHAPES), поэтому модели узнаются и сверху в бою,
-   и сбоку в арсенале. Координаты ствола: x — к дулу, y — вверх, z — вбок;
-   начало — верх пистолетной рукояти, там, где её держит рука. */
-const GUN3D = {
-  U: 0.0235, UP: 0.0145,                   // метров в единице таблицы: винтовки и пистолеты
-  POLY: '#1d2024', POLY_L: '#2c3035', METAL: '#30343a', STEEL: '#8e99a5', WOOD: '#3d2616',
-  ACC: '#272b30', OLIVE: '#30352b', TAN: '#7d7058', BAKELITE: '#4e2415',
-  BULLPUP: ['aug', 'famas', 'p90'],
-};
-const alongX = M4.rz(-Math.PI / 2);        // деталь, построенная по оси y, — вдоль ствола
-
-function buildGun(wid) {
-  const w = WEAPONS[wid];
-  const g = GUN_SHAPES[wid] || GUN_SHAPES.ak;
-  const cls = PEN_CLASS[wid];
-  const G = GUN3D;
-  const parts = [], feats = new Set();
-  const add = (msh, mat, col, m = M4.id(), ls = 1) => { const p = part(msh, mat, col, m, ls); parts.push(p); return p; };
-  const at = (x, y, z, ...r) => M4.chain(M4.t(x, y, z), ...r);
-  // Цилиндр вдоль ствола от x0 длиной L на высоте y.
-  const barrelCyl = (x0, L, r, y, mat, col, z = 0, r2 = r) => add(cyl(r, r2, L, 18), mat, col, at(x0, y, z, alongX));
-
-  if (w.slot === 'pistol') { buildPistol(wid, g, add, at, barrelCyl, feats); return gunResult(parts, feats); }
-  if (w.slot === 'melee') { add(rbox(0.12, 0.02, 0.004, 0.002), MAT.metal, G.STEEL); return gunResult(parts, feats); }
-
-  const U = G.U;
-  const len = g.len * U, rear = Math.min(-0.05, g.parts[0][0] * U);
-  const bull = G.BULLPUP.includes(wid);
-  const sniper = cls === 'sniper', shotgun = cls === 'shotgun', smg = cls === 'light';
-  const wood = g.parts.some(p => p[4] === 2) && !shotgun;
-  const body = wid === 'awp' ? G.OLIVE : wid === 'aug' ? G.OLIVE : wid === 'famas' ? G.POLY_L
-             : wid === 'p90' ? '#2a2f26' : wid === 'scar20' ? G.TAN : G.POLY;
-  const recv0 = bull ? rear + 0.04 : -0.045;
-  const recv1 = bull ? len * 0.3 : len * (sniper ? 0.33 : shotgun ? 0.36 : 0.38);
-  const hand1 = len * (sniper ? 0.62 : shotgun ? 0.8 : smg ? 0.72 : 0.76);
-  const recvH = smg ? 0.056 : shotgun ? 0.07 : 0.062;
-  const recvY = 0.012;
-
-  // Ствольная коробка, окно выброса, рукоять затвора.
-  const recvCol = wid === 'scar20' ? G.TAN : bull ? body : G.METAL;
-  add(rbox(recv1 - recv0, recvH, 0.038, 0.006), bull ? MAT.polymer : MAT.metal, recvCol, at((recv0 + recv1) / 2, recvY, 0));
-  add(rbox(0.055, 0.016, 0.004, 0.002), MAT.metal, '#0c0f12', at(recv0 + (recv1 - recv0) * 0.55, recvY + 0.01, 0.0195));
-  if (wid === 'ak' || wid === 'galil') {
-    add(cyl(0.005, 0.005, 0.03, 10), MAT.metal, G.STEEL, at(recv0 + (recv1 - recv0) * 0.7, recvY + 0.01, 0.02, M4.rx(Math.PI / 2)));
-    add(rbox(recv1 - recv0 - 0.02, 0.012, 0.034, 0.005), MAT.metal, G.METAL, at((recv0 + recv1) / 2 - 0.005, recvY + recvH / 2 + 0.004, 0));   // крышка
-  }
-  if (sniper) {                                              // затвор со стеблем и шаром
-    feats.add('bolt');
-    add(cyl(0.004, 0.004, 0.05, 10), MAT.metal, G.STEEL, at(recv0 + 0.05, recvY + 0.018, 0.018, M4.rx(Math.PI / 2 - 0.4)));
-    add(sphere(0.009, 12, 8), MAT.metal, G.STEEL, at(recv0 + 0.05, recvY + 0.036, 0.062));
-  }
-
-  // Приклад (у буллпапа корпус и есть приклад).
-  if (bull) {
-    const prof = wid === 'p90'
-      ? [[rear, 0.05], [len * 0.3, 0.05], [len * 0.46, 0.02], [len * 0.46, -0.04], [0.06, -0.06], [0.04, -0.1], [-0.02, -0.1],
-         [-0.02, -0.05], [rear + 0.04, -0.05], [rear, -0.02]]
-      : [[rear, 0.045], [recv1, 0.045], [recv1 + 0.02, -0.02], [0.03, -0.025], [rear + 0.02, -0.06], [rear, -0.06]];
-    add(extrude(prof, 0.046, 0.005), MAT.polymer, body);
-    add(rbox(0.02, 0.1, 0.048, 0.006), MAT.rubber, '#15181c', at(rear + 0.008, -0.005, 0));
-    feats.add('bullpup');
-  } else if (wid === 'mac10') {
-    add(tube([[recv0, 0.0, 0.016], [rear, 0.0, 0.016], [rear, -0.05, 0.016]], 0.0035, 8), MAT.metal, G.STEEL);
-    add(tube([[recv0, 0.0, -0.016], [rear, 0.0, -0.016], [rear, -0.05, -0.016]], 0.0035, 8), MAT.metal, G.STEEL);
-    add(rbox(0.008, 0.06, 0.04, 0.003), MAT.metal, G.METAL, at(rear, -0.03, 0));
-    feats.add('wireStock');
-  } else {
-    const top = sniper ? 0.05 : 0.03;
-    const prof = sniper
-      ? [[recv0 + 0.01, 0.03], [rear + 0.06, top + 0.01], [rear, top], [rear, -0.085], [rear + 0.05, -0.09], [rear + 0.13, -0.035],
-         [recv0 - 0.01, -0.03]]
-      : smg ? [[recv0 + 0.01, 0.025], [rear, 0.022], [rear, -0.06], [rear + 0.025, -0.064], [recv0, -0.012]]
-      : [[recv0 + 0.01, 0.03], [rear + 0.04, top], [rear, top + 0.004], [rear, -0.078], [rear + 0.035, -0.088], [recv0 - 0.005, -0.02]];
-    add(extrude(prof, sniper ? 0.044 : 0.038, 0.006), wood ? MAT.wood : MAT.polymer, wood ? G.WOOD : body);
-    add(rbox(0.016, (sniper ? 0.13 : 0.1), 0.042, 0.006), MAT.rubber, '#14171b', at(rear + 0.004, sniper ? -0.02 : -0.024, 0));
-    if (sniper) add(rbox(0.11, 0.022, 0.04, 0.008), MAT.polymer, body, at(rear + 0.09, top + 0.012, 0));   // щека
-    if (wood) feats.add('woodStock');
-  }
-
-  // Пистолетная рукоять, спуск, скоба.
-  const gripLen = wid === 'mac10' ? 0.15 : 0.1;
-  add(extrude([[-0.014, -0.012], [0.02, -0.012], [0.008, -gripLen], [-0.03, -gripLen + 0.008]], 0.03, 0.006),
-      MAT.polymer, bull ? body : G.POLY, at(bull ? 0 : 0, 0, 0));
-  add(rbox(0.004, 0.018, 0.006, 0.002), MAT.metal, G.STEEL, at(0.03, -0.022, 0, M4.rz(-0.25)));
-  add(tube([[0.018, -0.012, 0], [0.024, -0.04, 0], [0.055, -0.042, 0], [0.06, -0.014, 0]], 0.0028, 8), MAT.metal, G.METAL);
-
-  // Магазин.
-  const mx = bull ? rear * 0.55 : 0.032;
-  const magCol = wid === 'ak' ? G.BAKELITE : wid === 'm4' ? G.METAL : G.POLY;
-  const magMat = wid === 'm4' ? MAT.metal : MAT.polymer;
-  if (wid === 'ak' || wid === 'galil' || wid === 'mp5') {
-    const k = wid === 'mp5' ? 0.8 : 1;
-    const bez = (p0, p1, p2, t) => [0, 1].map(i => (1 - t) * (1 - t) * p0[i] + 2 * (1 - t) * t * p1[i] + t * t * p2[i]);
-    const back = [], front = [];
-    for (let i = 0; i <= 8; i++) {
-      const t = i / 8;
-      back.push(bez([mx, -0.015], [mx + 0.02 * k, -0.12 * k], [mx + 0.075 * k, -0.2 * k], t));
-      front.push(bez([mx + 0.068, -0.015], [mx + 0.09 * k, -0.11 * k], [mx + 0.13 * k, -0.19 * k], t));
-    }
-    add(extrude([...back, ...front.reverse()], 0.028, 0.004), magMat, magCol);
-    feats.add('curvedMag');
-  } else if (wid === 'p90') {
-    add(rbox(len * 0.5, 0.03, 0.05, 0.01), MAT.glass, '#5a4a30', at(len * 0.12, 0.066, 0));
-    feats.add('topMag');
-  } else if (wid === 'mac10') {
-    add(rbox(0.026, 0.05, 0.022, 0.003), MAT.metal, G.METAL, at(-0.006, -0.17, 0));
-  } else if (!shotgun || wid === 'mag7') {
-    const mh = sniper ? 0.06 : wid === 'ump45' ? 0.15 : wid === 'mag7' ? 0.08 : 0.16;
-    const mz = wid === 'mag7' ? -0.004 : mx;
-    add(extrude([[mz, -0.015], [mz + 0.07, -0.015], [mz + 0.078, -0.015 - mh], [mz + 0.008, -0.02 - mh]], 0.026, 0.004),
-        magMat, magCol);
-  }
-
-  // Цевьё.
-  if (wid === 'm4' || wid === 'scar20' || wid === 'galil' && !wood) {
-    add(rbox(hand1 - recv1, 0.05, 0.05, 0.008), MAT.polymer, G.ACC, at((recv1 + hand1) / 2, recvY, 0));
-    for (let x = recv1 + 0.01; x < hand1 - 0.006; x += 0.011) {            // планка: зубцы сверху и по бокам
-      add(rbox(0.006, 0.006, 0.026, 0.0015), MAT.metal, G.METAL, at(x, recvY + 0.028, 0));
-      add(rbox(0.006, 0.026, 0.006, 0.0015), MAT.metal, G.METAL, at(x, recvY, 0.028));
-    }
-    feats.add('rail');
-  } else if (wood) {
-    add(rbox(hand1 - recv1, 0.05, 0.046, 0.016), MAT.wood, G.WOOD, at((recv1 + hand1) / 2, recvY - 0.004, 0));
-    add(rbox((hand1 - recv1) * 0.6, 0.022, 0.034, 0.01), MAT.wood, G.WOOD, at(recv1 + (hand1 - recv1) * 0.3, recvY + 0.03, 0));
-  } else if (!shotgun && !bull) {
-    add(rbox(hand1 - recv1, 0.05, 0.046, 0.02), MAT.polymer, body, at((recv1 + hand1) / 2, recvY - 0.002, 0));
-    for (let x = recv1 + 0.02; x < hand1 - 0.02; x += 0.018)
-      add(rbox(0.007, 0.016, 0.003, 0.001), MAT.polymer, '#0d1013', at(x, recvY - 0.004, 0.0235));   // прорези
-  }
-
-  // Ствол, газовая трубка, дульное устройство, мушка.
-  const br = sniper ? 0.011 : shotgun ? 0.012 : 0.0085;
-  if (wid === 'mp5') {
-    barrelCyl(recv1, len - recv1, 0.021, recvY, MAT.metal, G.POLY);          // интегрированный глушитель
-    feats.add('suppressor');
-  } else {
-    // У буллпапа цевья нет: ствол выходит прямо из корпуса.
-    const b0 = bull ? (wid === 'p90' ? len * 0.44 : recv1) : hand1 - 0.02;
-    barrelCyl(b0, len - b0, br, recvY, MAT.metal, G.METAL);
-    if (!shotgun) barrelCyl(len - 0.045, 0.05, br + 0.006, recvY, MAT.metal, '#1c2025');
-  }
-  if (wid === 'ak' || wid === 'galil') {
-    barrelCyl(recv1, hand1 - recv1 + 0.03, 0.008, recvY + 0.03, MAT.metal, G.METAL);
-    add(rbox(0.012, 0.045, 0.012, 0.003), MAT.metal, G.METAL, at(len - 0.07, recvY + 0.02, 0));
-  } else if (wid === 'm4') {
-    add(extrude([[-0.02, 0], [0.02, 0], [0.006, 0.06], [-0.006, 0.06]], 0.012, 0.002), MAT.metal, G.METAL, at(hand1 + 0.03, recvY, 0));
-  }
-
-  // Прицел или открытый целик.
-  if (g.scope) {
-    feats.add('scope');
-    const sx0 = bull ? recv0 + 0.05 : recv0 + 0.02, sL = g.scope[2] * U * 1.25, sy = recvY + 0.075;
-    barrelCyl(sx0 + 0.04, sL - 0.08, 0.016, sy, MAT.metal, '#1c2127');
-    add(lathe([[0.016, 0], [0.027, 0.03], [0.028, 0.06], [0.028, 0.062], [0, 0.062]], 22), MAT.metal, '#1c2127',
-        at(sx0 + sL - 0.04, sy, 0, alongX));
-    add(lathe([[0, 0], [0, 0], [0.022, 0], [0.022, 0.04], [0.016, 0.05]], 22), MAT.metal, '#1c2127', at(sx0 - 0.012, sy, 0, alongX));
-    add(cyl(0.02, 0.02, 0.003, 22), MAT.glass, '#3a6f9a', at(sx0 + sL + 0.022, sy, 0, alongX), 1 / 0.02);
-    add(cyl(0.011, 0.011, 0.02, 12), MAT.metal, '#1c2127', at(sx0 + sL * 0.5, sy + 0.012, 0));
-    add(cyl(0.011, 0.011, 0.02, 12), MAT.metal, '#1c2127', at(sx0 + sL * 0.5, sy, 0.012, M4.rx(Math.PI / 2)));
-    for (const x of [sx0 + 0.05, sx0 + sL - 0.07])
-      add(rbox(0.018, 0.05, 0.03, 0.004), MAT.metal, G.METAL, at(x, recvY + 0.045, 0));
-  } else if (wid === 'famas') {
-    add(rbox(len * 0.55, 0.016, 0.02, 0.006), MAT.polymer, body, at(len * 0.05, recvY + 0.09, 0));
-    for (const x of [rear + 0.08, len * 0.3]) add(rbox(0.02, 0.06, 0.02, 0.005), MAT.polymer, body, at(x, recvY + 0.055, 0));
-    feats.add('carryHandle');
-  } else if (!bull) {
-    add(rbox(recv1 - recv0 - 0.02, 0.008, 0.024, 0.002), MAT.metal, G.METAL, at((recv0 + recv1) / 2, recvY + recvH / 2 + 0.006, 0));
-    add(rbox(0.014, 0.02, 0.02, 0.003), MAT.metal, '#15191e', at(recv0 + 0.03, recvY + recvH / 2 + 0.016, 0));
-  }
-
-  // Дробовик: подствольный магазин и цевьё-помпа с рёбрами.
-  if (shotgun) {
-    barrelCyl(recv1 - 0.01, len * 0.86 - recv1, 0.011, recvY - 0.022, MAT.metal, G.METAL);
-    if (wid !== 'xm1014') {
-      const prof = [[0, 0], [0.018, 0]];
-      for (let i = 0; i < 9; i++) prof.push([i % 2 ? 0.0185 : 0.0205, 0.012 + i * 0.015]);
-      prof.push([0.018, 0.15], [0, 0.15]);
-      add(lathe(prof, 20), MAT.polymer, G.POLY, at(len * 0.45, recvY - 0.022, 0, alongX));
-      feats.add('pump');
-    } else {
-      add(rbox(len * 0.4, 0.045, 0.046, 0.016), MAT.polymer, G.POLY, at(len * 0.55, recvY - 0.012, 0));
-    }
-    feats.add('tube');
-  }
-  // Складные сошки у снайперских и вертикальная рукоятка AUG.
-  if (sniper && wid !== 'ssg08') {
-    for (const z of [-0.012, 0.012]) barrelCyl(hand1 - 0.2, 0.19, 0.004, recvY - 0.03, MAT.metal, G.METAL, z);
-    feats.add('bipod');
-  }
-  if (wid === 'aug') add(rbox(0.025, 0.08, 0.028, 0.01), MAT.polymer, body, at(len * 0.38, -0.05, 0, M4.rz(0.3)));
-  return gunResult(parts, feats);
-}
-
-function buildPistol(wid, g, add, at, barrelCyl, feats) {
-  const G = GUN3D, U = G.UP;
-  const len = g.len * U * (wid === 'usp' ? 0.75 : 1);
-  const silver = wid === 'deagle';
-  const slideCol = silver ? '#8d969f' : wid === 'fiveseven' ? '#3a423c' : '#1f2226';
-  const slideMat = silver ? MAT.metal : MAT.metal;
-  const sh = wid === 'deagle' ? 0.036 : 0.03;
-  const x0 = -0.034, x1 = len + 0.004;
-  // Затвор — профиль со скошенным верхом и носом, выдавленный на толщину.
-  add(extrude([[x0, 0.006], [x1, 0.006], [x1, sh - 0.01], [x1 - 0.008, sh + 0.006], [x0 + 0.004, sh + 0.006], [x0, sh - 0.004]],
-              0.026, 0.004), slideMat, slideCol);
-  for (let i = 0; i < 7; i++)                                                // насечки затвора
-    add(rbox(0.0022, sh * 0.62, 0.0275, 0.0008), MAT.metal, '#0c0e10', at(x0 + 0.008 + i * 0.0048, 0.006 + sh * 0.5, 0));
-  add(rbox(0.03, 0.01, 0.003, 0.001), MAT.metal, '#0b0d0f', at(0.012, sh - 0.004, 0.0135));   // окно выброса
-  // Рамка с планкой под фонарь, рукоять с наклоном и насечкой, скоба, спуск.
-  add(rbox(len - 0.004, 0.017, 0.024, 0.005), MAT.polymer, wid === 'fiveseven' ? '#474f47' : G.POLY, at(len / 2 - 0.012, -0.002, 0));
-  for (let x = len * 0.45; x < len - 0.01; x += 0.009) add(rbox(0.004, 0.004, 0.02, 0.001), MAT.polymer, '#101214', at(x, -0.012, 0));
-  add(extrude([[-0.032, 0.004], [0.012, 0.004], [0.004, -0.088], [-0.03, -0.092], [-0.046, -0.08], [-0.04, -0.02]], 0.029, 0.006),
-      MAT.polymer, G.POLY);
-  add(rbox(0.03, 0.05, 0.0305, 0.004), MAT.rubber, '#121417', at(-0.018, -0.05, 0, M4.rz(-0.2)));   // накладка-насечка
-  add(tube([[0.008, -0.006, 0], [0.013, -0.03, 0], [0.04, -0.031, 0], [0.047, -0.008, 0]], 0.0026, 8), MAT.polymer, G.POLY);
-  add(rbox(0.004, 0.016, 0.006, 0.0015), MAT.metal, G.STEEL, at(0.017, -0.016, 0, M4.rz(-0.25)));
-  add(extrude([[-0.026, -0.086], [0.0, -0.086], [-0.004, -0.094], [-0.028, -0.096]], 0.024, 0.002), MAT.metal, '#15181b');  // магазин
-  // Прицельные: мушка и целик с белыми точками.
-  add(rbox(0.005, 0.006, 0.005, 0.001), MAT.metal, '#15181b', at(len - 0.014, sh + 0.009, 0));
-  add(rbox(0.007, 0.007, 0.022, 0.001), MAT.metal, '#15181b', at(x0 + 0.01, sh + 0.009, 0));
-  add(sphere(0.0015, 6, 4), MAT.glow, '#d9ffe0', at(len - 0.014, sh + 0.011, 0.0028), 1 / 0.0015);
-  barrelCyl(x1 - 0.003, 0.004, 0.006, 0.02, MAT.metal, '#0b0d10');
-  if (wid === 'usp') {                                                       // глушитель вплотную к стволу
-    barrelCyl(x1 - 0.002, 0.012, 0.009, 0.02, MAT.metal, '#2a2e33');
-    barrelCyl(x1 + 0.01, 0.13, 0.016, 0.02, MAT.metal, '#1c1f23');
-    feats.add('suppressor');
-  }
-  feats.add('pistol');
-}
-
-/** Габариты по точкам деталей — для камеры превью. */
-function gunResult(parts, feats) {
-  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-  for (const pt of parts)
-    for (let i = 0; i < pt.mesh.p.length; i += 3) {
-      const q = M4.point(pt.m, [pt.mesh.p[i], pt.mesh.p[i + 1], pt.mesh.p[i + 2]]);
-      for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], q[k]); max[k] = Math.max(max[k], q[k]); }
-    }
-  return { parts, feats, halos: [], bounds: { min, max } };
-}
-
-/* ── Боец ─────────────────────────────────────────────────────────────────
-   Стоит лицом к +z, ноги чуть вразнобой, ствол в низкой готовности поперёк
-   корпуса: приклад у правого плеча, дуло к левому бедру. Правая рука бойца —
-   на рукояти, левая — на цевье; локти считаются двухзвенной кинематикой. */
-const SOLDIER3D = {
-  CLOTH: '#353b43', NYLON: '#1f2328', NYLON_D: '#15181b', PLATE: '#2a3037', RUBBER: '#101214',
-  BOOT: '#17191b', GLOVE: '#131517', KNIT: '#0f1113', HELMET: '#2a2f35', METAL: '#474f59',
-  POLY: '#1d2329', ACCENT: '#54a8ff', EOD: '#2f363e', EOD_PLATE: '#3d4650', HOSE: '#16191d',
-  LENS: '#39ff6a', AMBER: '#ff9a3c',
-  ARM_UP: 0.3, ARM_LOW: 0.285,
-};
-
-/** Локоть по плечу, кисти и направлению, куда локоть смотрит. */
-function solveElbow(S, T, l1, l2, pole) {
-  const st = V3.sub(T, S);
-  const d = Math.min(Math.max(V3.len(st), 0.02), l1 + l2 - 1e-3);
-  const dir = V3.norm(st);
-  const a = (l1 * l1 - l2 * l2 + d * d) / (2 * d);
-  const h = Math.sqrt(Math.max(l1 * l1 - a * a, 0));
-  let pv = V3.sub(pole, S);
-  pv = V3.norm(V3.sub(pv, V3.mul(dir, V3.dot(pv, dir))));
-  return V3.add(V3.add(S, V3.mul(dir, a)), V3.mul(pv, h));
-}
-
-function buildSoldier(look) {
-  const C = SOLDIER3D;
-  const parts = [], halos = [], feats = new Set();
-  const add = (msh, mat, col, m = M4.id(), ls = 1) => { const p = part(msh, mat, col, m, ls); parts.push(p); return p; };
-  const at = (x, y, z, ...r) => M4.chain(M4.t(x, y, z), ...r);
-  const seg = (a, b, ra, rb, mat, col, bulge = 0) =>
-    add(limbMesh(V3.len(V3.sub(b, a)), ra, rb, bulge), mat, col, M4.aim(a, V3.sub(b, a), [0, 0, 1], 'y'));
-  const ringOn = (p, dir, R, r, mat, col) => add(torus(R, r, 22, 8), mat, col, M4.aim(p, dir, [0, 0, 1], 'y'));
-  const eod = look.armor === 'eod', heavy = look.armor === 'heavy';
-  const carrier = look.armor === 'assault' || heavy;
-  const soft = look.armor === 'kevlar' || look.armor === 'helmet';
-  const suit = eod ? C.EOD : C.CLOTH;
-  const bulk = eod ? 1.28 : 1;
-
-  // ── Ноги ────────────────────────────────────────────────────────────
-  const legs = [
-    { s: -1, hip: [-0.105, 0.93, 0], knee: [-0.115, 0.505, 0.03], ankle: [-0.13, 0.1, -0.035] },
-    { s: 1, hip: [0.105, 0.93, 0], knee: [0.12, 0.51, 0.08], ankle: [0.135, 0.1, 0.06] },
-  ];
-  for (const L of legs) {
-    seg(L.hip, L.knee, 0.1 * bulk, 0.066 * bulk, MAT.fabric, suit, 0.1);
-    seg(L.knee, L.ankle, 0.064 * bulk, 0.05 * bulk, MAT.fabric, suit, 0.16);
-    const shin = V3.norm(V3.sub(L.ankle, L.knee)), thigh = V3.norm(V3.sub(L.knee, L.hip));
-    // Наколенник: чашка на ремнях.
-    add(sphere(0.05, 18, 10, 1, 1.15, 0.55), MAT.rubber, '#1c2025',
-        M4.chain(M4.aim(V3.add(L.knee, [0, -0.01, 0.05 * bulk]), shin, [0, 0, 1], 'y')));
-    for (const off of [-0.035, 0.045]) ringOn(V3.add(L.knee, V3.mul(shin, off)), shin, 0.058 * bulk, 0.006, MAT.nylon, C.NYLON_D);
-    // Ботинок: голенище, стопа, подошва с протектором, шнуровка.
-    const a = L.ankle;
-    add(limbMesh(0.12, 0.052, 0.05, 0), MAT.leather, C.BOOT, at(a[0], 0.07, a[2]));
-    add(rbox(0.105, 0.085, 0.26, 0.035), MAT.leather, C.BOOT, at(a[0], 0.06, a[2] + 0.06));
-    add(sphere(0.052, 16, 8, 1, 0.72, 1.1), MAT.leather, '#23272e', at(a[0], 0.045, a[2] + 0.16));
-    add(rbox(0.112, 0.024, 0.28, 0.009), MAT.rubber, C.RUBBER, at(a[0], 0.012, a[2] + 0.062));
-    for (let i = 0; i < 5; i++)
-      add(rbox(0.05, 0.006, 0.008, 0.002), MAT.rubber, '#0f1216', at(a[0], 0.09 + i * 0.022, a[2] + 0.052 + (i < 1 ? 0.02 : 0)));
-    if (eod) {                                                         // щитки сапёра: бедро, голень, колено
-      add(rbox(0.13, 0.26, 0.05, 0.025), MAT.plate, C.EOD_PLATE, M4.chain(M4.aim(V3.lerp(L.hip, L.knee, 0.5), thigh, [0, 0, 1], 'y'), M4.t(0, 0, 0.085)));
-      add(rbox(0.12, 0.3, 0.045, 0.022), MAT.plate, C.EOD_PLATE, M4.chain(M4.aim(V3.lerp(L.knee, L.ankle, 0.5), shin, [0, 0, 1], 'y'), M4.t(0, 0, 0.07)));
-      for (const k of [0.3, 0.5, 0.7])
-        ringOn(V3.lerp(L.knee, L.ankle, k), shin, 0.07, 0.005, MAT.nylon, C.NYLON_D);
-      add(rbox(0.125, 0.07, 0.28, 0.03), MAT.plate, '#323a43', at(a[0], 0.08, a[2] + 0.06));   // бахилы
-    }
-    if (!eod) {                                                        // карманы-карго на бёдрах
-      const mid = V3.lerp(L.hip, L.knee, 0.5);
-      if (!(L.s < 0 && look.holster)) {
-        add(rbox(0.034, 0.15, 0.12, 0.014), MAT.fabric, '#30363d', at(mid[0] + L.s * 0.078, mid[1], mid[2] + 0.005, M4.rz(L.s * -0.06)));
-        add(rbox(0.038, 0.045, 0.126, 0.012), MAT.fabric, '#2a3036', at(mid[0] + L.s * 0.082, mid[1] + 0.065, mid[2] + 0.005, M4.rz(L.s * -0.06)));
-      }
-      ringOn(V3.add(L.ankle, [0, 0.13, 0.005]), shin, 0.058, 0.014, MAT.fabric, suit);   // брюки заправлены в ботинки
-    }
-  }
-
-  // ── Таз, пояс, корпус ───────────────────────────────────────────────
-  add(loft([{ y: 0.82, rx: 0.15, rz: 0.105 }, { y: 0.9, rx: 0.188, rz: 0.122 }, { y: 1.0, rx: 0.172, rz: 0.114 }]), MAT.fabric, suit);
-  add(loft([{ y: 0.975, rx: 0.18, rz: 0.125, e: 2.5 }, { y: 1.03, rx: 0.18, rz: 0.125, e: 2.5 }], 32, 1), MAT.nylon, C.NYLON_D);
-  add(rbox(0.05, 0.04, 0.012, 0.004), MAT.metal, '#7f8a96', at(0, 1.002, 0.127));
-  add(loft([
-    { y: 0.98, rx: 0.165, rz: 0.11, e: 2.3 }, { y: 1.1, rx: 0.162, rz: 0.11, e: 2.3 }, { y: 1.22, rx: 0.185, rz: 0.125, e: 2.3 },
-    { y: 1.33, rx: 0.21, rz: 0.13, e: 2.3 }, { y: 1.42, rx: 0.215, rz: 0.115, e: 2.3 }, { y: 1.47, rx: 0.17, rz: 0.095 },
-    { y: 1.51, rx: 0.12, rz: 0.08 }, { y: 1.54, rx: 0.068, rz: 0.062 },
-  ], 32, 3), MAT.fabric, suit);
-  for (const s of [-1, 1]) add(sphere(0.078 * bulk, 18, 10, 1, 1.1, 1), MAT.fabric, suit, at(s * 0.215, 1.405, 0));
-  if (!eod) for (const s of [-1, 1]) {
-    const pm = M4.chain(M4.t(s * 0.262, 1.33, 0.005), M4.rz(s * -0.12), M4.ry(s * Math.PI / 2));
-    add(rbox(0.075, 0.08, 0.008, 0.01), MAT.nylon, '#1a1d21', pm);
-    if (s < 0) {
-      add(rbox(0.06, 0.012, 0.004, 0.002), MAT.glow, C.ACCENT, M4.mul(pm, M4.t(0, -0.022, 0.005)), 1 / 0.03);
-      halos.push({ p: M4.point(pm, [0, -0.022, 0.01]), d: M4.dir(pm, [0, 0, 1]), size: 0.035, col: C.ACCENT, power: 0.35 });
-    }
-  }
-  if (look.armor === 'none') {                                        // рубашка: карманы и молния
-    for (const s of [-1, 1]) {
-      add(rbox(0.1, 0.11, 0.02, 0.008), MAT.fabric, '#2f4156', at(s * 0.085, 1.3, 0.112, M4.ry(s * 0.25)));
-      add(rbox(0.104, 0.035, 0.024, 0.008), MAT.fabric, '#2a3a4d', at(s * 0.085, 1.345, 0.114, M4.ry(s * 0.25)));
-    }
-    add(rbox(0.008, 0.46, 0.012, 0.002), MAT.metal, '#6f7a86', at(0, 1.25, 0.107, M4.rx(-0.02)));
-  }
-
-  // ── Броня ──────────────────────────────────────────────────────────
-  if (soft) {
-    add(loft([{ y: 1.03, rx: 0.184, rz: 0.132, e: 2.6 }, { y: 1.2, rx: 0.205, rz: 0.146, e: 2.6 },
-              { y: 1.36, rx: 0.23, rz: 0.15, e: 2.6 }, { y: 1.44, rx: 0.205, rz: 0.13, e: 2.4 }], 32, 3), MAT.nylon, C.NYLON);
-    for (const s of [-1, 1]) add(rbox(0.07, 0.02, 0.25, 0.008), MAT.nylon, C.NYLON, at(s * 0.12, 1.455, 0, M4.rz(s * 0.25)));
-    add(rbox(0.12, 0.04, 0.008, 0.004), MAT.polymer, '#141a21', at(0, 1.39, 0.14));
-    add(rbox(0.1, 0.012, 0.009, 0.003), MAT.polymer, C.ACCENT, at(0, 1.39, 0.142));
-    for (const y of [1.12, 1.2]) add(rbox(0.3, 0.02, 0.01, 0.004), MAT.nylon, C.NYLON_D, at(0, y, 0.132));
-    feats.add('softVest');
-  }
-  if (carrier) {
-    add(loft([{ y: 1.07, rx: 0.198, rz: 0.14, e: 2.6 }, { y: 1.23, rx: 0.206, rz: 0.146, e: 2.6 }], 32, 2), MAT.nylon, C.NYLON);
-    for (const y of [1.1, 1.14, 1.18]) add(loft([{ y, rx: 0.205, rz: 0.148, e: 2.6 }, { y: y + 0.012, rx: 0.205, rz: 0.148, e: 2.6 }], 32, 1), MAT.nylon, C.NYLON_D);
-    for (const z of [1, -1]) {
-      add(rbox(0.32, 0.34, 0.055, 0.024), MAT.nylon, C.NYLON, at(0, 1.27, z * 0.152, M4.rx(z * -0.06)));
-      for (const y of [1.14, 1.17, 1.2]) add(rbox(0.3, 0.012, 0.006, 0.002), MAT.nylon, C.NYLON_D, at(0, y, z * 0.181));
-    }
-    for (const s of [-1, 1]) add(tube([[s * 0.1, 1.42, 0.13], [s * 0.125, 1.49, 0.02], [s * 0.125, 1.49, -0.04], [s * 0.1, 1.42, -0.13]], 0.02, 10), MAT.nylon, C.NYLON);
-    // Три подсумка с магазинами и шнуром-резинкой, административный подсумок.
-    for (let i = -1; i <= 1; i++) {
-      add(rbox(0.078, 0.12, 0.048, 0.012), MAT.nylon, C.NYLON, at(i * 0.088, 1.18, 0.205));
-      add(rbox(0.056, 0.05, 0.028, 0.006), MAT.polymer, C.POLY, at(i * 0.088, 1.255, 0.205));
-      add(tube([[i * 0.088 - 0.03, 1.24, 0.231], [i * 0.088, 1.27, 0.231], [i * 0.088 + 0.03, 1.24, 0.231]], 0.003, 6), MAT.rubber, '#0e1114');
-    }
-    add(rbox(0.21, 0.07, 0.03, 0.01), MAT.nylon, C.NYLON, at(0, 1.33, 0.198));
-    add(rbox(0.1, 0.028, 0.006, 0.003), MAT.polymer, '#141a21', at(0, 1.335, 0.214));
-    add(rbox(0.085, 0.01, 0.007, 0.002), MAT.glow, C.ACCENT, at(0, 1.335, 0.216), 1 / 0.04);
-    // Рация на левом боку с антенной вдоль плеча, жгут на правой лямке, ручка эвакуации.
-    add(rbox(0.06, 0.13, 0.05, 0.012), MAT.nylon, C.NYLON, at(0.232, 1.15, 0.02));
-    add(rbox(0.05, 0.05, 0.035, 0.008), MAT.polymer, '#141a20', at(0.232, 1.235, 0.02));
-    add(tube([[0.232, 1.26, 0.02], [0.22, 1.38, -0.02], [0.2, 1.55, -0.08], [0.17, 1.72, -0.1]], 0.004, 6), MAT.rubber, '#0c0f12');
-    add(cyl(0.017, 0.017, 0.1, 14), MAT.polymer, '#121619', at(-0.115, 1.37, 0.165));
-    add(rbox(0.02, 0.02, 0.012, 0.003), MAT.polymer, '#b3261e', at(-0.115, 1.36, 0.185));
-    add(tube([[-0.05, 1.42, -0.17], [0, 1.46, -0.19], [0.05, 1.42, -0.17]], 0.008, 8), MAT.nylon, C.NYLON_D);
-    feats.add('plateCarrier');
-  }
-  if (heavy) {
-    add(loft([{ y: 1.47, rx: 0.13, rz: 0.11 }, { y: 1.56, rx: 0.12, rz: 0.1 }], 28, 2, false, false), MAT.nylon, C.NYLON);
-    add(rbox(0.1, 0.12, 0.04, 0.02), MAT.nylon, C.NYLON, at(0, 1.07, 0.17, M4.rx(0.05)));
-    add(rbox(0.08, 0.1, 0.035, 0.02), MAT.nylon, C.NYLON, at(0, 0.96, 0.15, M4.rx(0.12)));
-    feats.add('heavy');
-  }
-  if (eod) buildBombSuit(add, at, ringOn, feats);
-
-  // Пауldроны тяжёлого и сапёрного: три пластины внахлёст на каждом плече.
-  if (heavy || eod) {
-    for (const s of [-1, 1])
-      for (let k = 0; k < 3; k++) {
-        const r = (eod ? 0.1 : 0.082) - k * 0.006;
-        add(sphere(r, 18, 10, 1, 0.5, 1.05), MAT.plate, eod ? C.EOD_PLATE : C.PLATE,
-            at(s * (0.22 + k * 0.018), 1.46 - k * 0.045, 0, M4.rz(s * (-0.45 - k * 0.15))));
-        add(sphere(0.006, 8, 6), MAT.metal, '#9aa4ae', at(s * (0.235 + k * 0.02), 1.49 - k * 0.045, 0.05));
-      }
-  }
-
-  // ── Голова: маска, гарнитура, шлем или кепка, оптика ─────────────────
-  add(limbMesh(0.09, 0.062, 0.056, 0), MAT.knit, C.KNIT, at(0, 1.49, 0.004));
-  const head = [0, 1.665, 0.005];
-  if (!eod) {
-    add(sphere(0.1, 24, 14, 0.86, 1.13, 0.98), MAT.knit, C.KNIT, at(...head));
-    add(sphere(0.02, 12, 8, 0.8, 1.6, 1), MAT.knit, C.KNIT, at(0, 1.655, 0.092));                // нос
-    add(rbox(0.058, 0.034, 0.02, 0.009), MAT.grille, '#101418', at(0, 1.605, 0.086, M4.rx(0.2))); // сетка
-    feats.add('mask');
-    // Гарнитура: чашки, дужка, микрофон у рта.
-    for (const s of [-1, 1]) {
-      add(cyl(0.04, 0.036, 0.034, 20), MAT.polymer, '#1a1f25', at(s * 0.085, 1.665, 0, M4.rz(-s * Math.PI / 2)));
-      add(torus(0.036, 0.006, 20, 8), MAT.rubber, '#0e1114', at(s * 0.1, 1.665, 0, M4.rz(Math.PI / 2)));
-    }
-    add(tube([[-0.11, 1.64, 0.01], [-0.085, 1.6, 0.075], [-0.03, 1.598, 0.1]], 0.0035, 6), MAT.rubber, '#0e1114');
-    add(sphere(0.011, 10, 8), MAT.polymer, '#0b0e11', at(-0.024, 1.598, 0.103));
-  }
-  if (look.head === 'cap') {
-    add(lathe(arcProfile(0.104, 0, 0, Math.PI / 2, 8), 26, 0.9, 1.02), MAT.fabric, '#2d3d51', at(0, 1.7, 0.005));
-    add(rbox(0.17, 0.008, 0.1, 0.004), MAT.fabric, '#25344a', at(0, 1.705, 0.11, M4.rx(0.18)));
-    add(rbox(0.05, 0.03, 0.006, 0.003), MAT.polymer, '#141a21', at(0, 1.765, 0.085, M4.rx(-0.5)));
-    add(loft([{ y: 1.668, rx: 0.093, rz: 0.108 }, { y: 1.686, rx: 0.093, rz: 0.108 }], 28, 1, false, false), MAT.nylon, C.NYLON_D);
-  } else if (look.head === 'helmet') {
-    add(lathe(arcProfile(0.118, 0, 0.14, Math.PI / 2, 12), 30, 0.95, 1.06), MAT.nylon, C.HELMET, at(0, 1.675, 0.004));
-    add(torus(0.117 * 0.99, 0.005, 30, 6), MAT.rubber, '#11151a', M4.chain(at(0, 1.692, 0.004), M4.s(0.95, 1, 1.06)));
-    for (const s of [-1, 1]) {
-      add(rbox(0.014, 0.036, 0.1, 0.004), MAT.polymer, '#1c232b', at(s * 0.112, 1.715, 0.0, M4.rz(s * 0.25)));
-      for (let i = 0; i < 4; i++) add(rbox(0.016, 0.03, 0.006, 0.0015), MAT.polymer, '#2b343e', at(s * 0.114, 1.715, -0.035 + i * 0.023, M4.rz(s * 0.25)));
-    }
-    add(rbox(0.1, 0.05, 0.012, 0.005), MAT.nylon, '#26313d', at(0, 1.79, -0.02, M4.rx(-0.4)));        // липучка
-    add(rbox(0.09, 0.055, 0.035, 0.01), MAT.nylon, C.NYLON, at(0, 1.71, -0.125));                    // противовес
-    add(rbox(0.05, 0.035, 0.02, 0.006), MAT.metal, C.METAL, at(0, 1.76, 0.108, M4.rx(0.35)));        // крепление ПНВ
-    for (const s of [-1, 1]) add(tube([[s * 0.1, 1.68, 0.03], [s * 0.07, 1.6, 0.06], [0, 1.575, 0.075]], 0.004, 6), MAT.nylon, '#0f1317');
-  }
-  if (eod) buildBombHelmet(add, at);
-
-  // Оптика.
-  if (look.optic === 'thermal') {
-    add(rbox(0.125, 0.045, 0.05, 0.014), MAT.polymer, '#20262d', at(0, 1.678, 0.112));
-    for (const s of [-1, 1]) {
-      add(cyl(0.016, 0.016, 0.02, 18), MAT.polymer, '#15191e', at(s * 0.038, 1.678, 0.135, M4.rx(Math.PI / 2)));
-      add(cyl(0.012, 0.012, 0.003, 18), MAT.germanium, '#3a1f55', at(s * 0.038, 1.678, 0.155, M4.rx(Math.PI / 2)));
-    }
-    add(cyl(0.025, 0.023, 0.035, 22), MAT.polymer, '#1a1f25', at(0, 1.682, 0.135, M4.rx(Math.PI / 2)));
-    add(torus(0.023, 0.0035, 22, 8), MAT.metal, C.METAL, at(0, 1.682, 0.17, M4.rx(Math.PI / 2)));
-    add(cyl(0.02, 0.02, 0.003, 22), MAT.germanium, '#3a1f55', at(0, 1.682, 0.169, M4.rx(Math.PI / 2)));
-    add(sphere(0.0035, 8, 6), MAT.glow, C.AMBER, at(0.055, 1.695, 0.137), 1 / 0.0035);
-    halos.push({ p: [0.055, 1.695, 0.14], d: [0, 0, 1], size: 0.018, col: C.AMBER, power: 0.8 });
-    feats.add('thermal');
-  } else {
-    const y = eod ? 1.745 : 1.702, z = eod ? 0.2 : 0.14;
-    const mountTop = eod ? [0, 1.86, 0.15] : [0, 1.76, 0.115];
-    add(rbox(0.022, 0.065, 0.018, 0.005), MAT.metal, C.METAL, M4.chain(M4.aim(V3.lerp(mountTop, [0, y + 0.02, z - 0.01], 0.5), V3.sub(mountTop, [0, y + 0.02, z - 0.01]), [0, 0, 1], 'y')));
-    add(rbox(0.135, 0.03, 0.035, 0.01), MAT.polymer, '#1b2026', at(0, y + 0.004, z - 0.012));
-    add(rbox(0.05, 0.022, 0.03, 0.006), MAT.polymer, '#1b2026', at(0, y + 0.024, z - 0.012));
-    NVG_LENSES.nvg4.forEach(([lx, , r], i) => {
-      const outer = Math.abs(lx) > 10;
-      const x = (outer ? Math.sign(lx) * 0.057 : Math.sign(lx) * 0.0205);
-      const R = outer ? 0.0135 : 0.0158;
-      const splay = outer ? Math.sign(lx) * 0.28 : 0;
-      const base = [x, y, z];
-      const dir = [Math.sin(splay), 0, Math.cos(splay)];
-      const rot = M4.chain(M4.t(...base), M4.ry(splay), M4.rx(Math.PI / 2));
-      add(cyl(R, R * 1.04, 0.052, 20), MAT.polymer, '#1a1f25', rot);
-      add(torus(R * 1.02, 0.0028, 20, 8), MAT.metal, '#5a636d', M4.chain(rot, M4.t(0, 0.052, 0)));
-      add(cyl(R * 0.82, R * 0.82, 0.002, 20), MAT.glow, C.LENS, M4.chain(rot, M4.t(0, 0.0515, 0)), 1 / (R * 0.82));
-      const tip = V3.add(base, V3.mul(dir, 0.054));
-      halos.push({ p: tip, d: dir, size: 0.05, col: '#46ff7a', power: 1.1, lens: true });
-      void i; void r;
-    });
-    // Зелёный отсвет на маске — свет самого прибора.
-    halos.push({ p: [0, y - 0.03, z - 0.01], d: [0, 0, 1], size: 0.13, col: '#2aff66', power: 0.22 });
-    feats.add('nvg4');
-  }
-
-  // ── Руки и ствол в руках ────────────────────────────────────────────
-  const inHands = look.inHands;
-  const isPistol = WEAPONS[inHands].slot === 'pistol';
-  const gun = buildGun(inHands);
-  let gunM, gripHand, foreHand;
-  if (isPistol) {
-    gunM = M4.aim([0.0, 1.1, 0.32], [0, -0.55, 0.85], [0, 1, 0], 'x');
-    gripHand = M4.point(gunM, [-0.01, -0.045, 0]);
-    foreHand = M4.point(gunM, [0.0, -0.05, -0.03]);
-  } else {
-    const g = GUN_SHAPES[inHands] || GUN_SHAPES.ak;
-    const rearM = Math.min(-0.05, g.parts[0][0] * GUN3D.U);
-    const d = V3.norm([0.55, -0.55, 0.45]);
-    const butt = [-0.14, 1.345, 0.15];
-    const grip = V3.add(butt, V3.mul(d, -rearM));
-    gunM = M4.aim(grip, d, [0, 1, 0.35], 'x');
-    gripHand = M4.point(gunM, [-0.004, -0.05, 0]);
-    const fore = Math.min((g.fore || g.len * 0.5) * GUN3D.U * 0.85, 0.28);
-    foreHand = M4.point(gunM, [fore, -0.03, 0]);
-  }
-  for (const p of gun.parts) parts.push({ ...p, m: M4.mul(gunM, p.m) });
-  // Пальцы обхватывают рукоять и цевьё: ряд фаланг поперёк ствола.
-  const fingers = (base, step) => {
-    for (let i = 0; i < 4; i++) {
-      const q = V3.add(base, V3.mul(step, i));
-      add(limbMesh(0.03, 0.0095, 0.0085, 0), MAT.leather, C.GLOVE, M4.mul(gunM, M4.chain(M4.t(...q), M4.rx(Math.PI / 2))));
-    }
-  };
-  if (isPistol) fingers([0.004, -0.028, -0.012], [0, -0.017, 0]);
-  else {
-    const gl = GUN_SHAPES[inHands] || GUN_SHAPES.ak;
-    const foreX = Math.min((gl.fore || gl.len * 0.5) * GUN3D.U * 0.85, 0.28);
-    fingers([0.006, -0.03, -0.012], [0, -0.017, 0]);
-    fingers([foreX - 0.026, -0.022, -0.012], [0.017, 0, 0]);
-  }
-  // Ремень оружия от приклада через плечо.
-  add(tube([M4.point(gunM, [-0.12, 0.0, 0.02]), [-0.17, 1.44, 0.08], [0.0, 1.5, -0.16], [0.18, 1.2, -0.08], M4.point(gunM, [0.2, 0.0, 0.02])], 0.009, 8, 8), MAT.nylon, C.NYLON_D);
-
-  const shoulders = { R: [-0.225, 1.4, 0.0], L: [0.225, 1.4, 0.0] };
-  const arms = [
-    { S: shoulders.R, T: gripHand, pole: [-0.5, 1.0, -0.2] },
-    { S: shoulders.L, T: foreHand, pole: [0.55, 1.0, -0.1] },
-  ];
-  for (const A of arms) {
-    const E = solveElbow(A.S, A.T, C.ARM_UP, C.ARM_LOW, A.pole);
-    const fDir = V3.norm(V3.sub(A.T, E));
-    const wrist = V3.sub(A.T, V3.mul(fDir, 0.045));
-    seg(A.S, E, 0.062 * bulk, 0.05 * bulk, MAT.fabric, suit, 0.14);
-    seg(E, wrist, 0.05 * bulk, 0.038 * bulk, MAT.fabric, suit, 0.12);
-    // Налокотник, манжета, перчатка с накладкой на костяшках.
-    const uDir = V3.norm(V3.sub(E, A.S));
-    add(sphere(0.046 * bulk, 16, 10, 1, 1.25, 0.62), MAT.rubber, '#1c2025', M4.chain(M4.aim(E, V3.add(uDir, fDir), [0, 0, -1], 'y'), M4.t(0, 0, -0.018)));
-    ringOn(wrist, fDir, 0.036 * bulk, 0.007, MAT.fabric, eod ? '#384a5e' : '#2a394b');
-    if (eod) {
-      ringOn(E, uDir, 0.062, 0.01, MAT.plate, SOLDIER3D.EOD_PLATE);
-      for (let k = 0; k < 3; k++)
-        add(rbox(0.07, 0.07, 0.03, 0.014), MAT.plate, SOLDIER3D.EOD_PLATE,
-            M4.mul(M4.aim(V3.lerp(A.S, E, 0.3 + k * 0.22), uDir, [A.S[0] < 0 ? -1 : 1, 0, 0.3], 'y'), M4.t(0, 0, 0.052)));
-      for (let k = 0; k < 2; k++)
-        add(rbox(0.06, 0.09, 0.028, 0.013), MAT.plate, SOLDIER3D.EOD_PLATE,
-            M4.mul(M4.aim(V3.lerp(E, wrist, 0.3 + k * 0.4), fDir, [0, 1, 0], 'y'), M4.t(0, 0, 0.045)));
-      ringOn(wrist, fDir, 0.05, 0.012, MAT.plate, '#323a43');
-    }
-    const hm = M4.aim(V3.add(wrist, V3.mul(fDir, 0.045)), fDir, [0, 1, 0], 'y');
-    add(rbox(0.058, 0.09, 0.045, 0.018), MAT.leather, C.GLOVE, hm);
-    add(rbox(0.05, 0.035, 0.012, 0.005), MAT.polymer, '#2a323b', M4.mul(hm, M4.t(0, 0.012, 0.022)));
-    add(limbMesh(0.04, 0.011, 0.009, 0), MAT.leather, C.GLOVE, M4.mul(hm, M4.chain(M4.t(0.026, -0.02, 0.0), M4.rz(-0.7))));
-  }
-
-  // Кобура с пистолетом на правом бедре, нож на снаряжении.
-  if (look.holster) {
-    const thighMid = V3.lerp(legs[0].hip, legs[0].knee, 0.42);
-    add(rbox(0.035, 0.2, 0.1, 0.012), MAT.nylon, C.NYLON, at(thighMid[0] - 0.075, thighMid[1], thighMid[2] + 0.01));
-    const pist = buildGun(look.holster);
-    const pm = M4.chain(M4.t(thighMid[0] - 0.08, thighMid[1] + 0.055, thighMid[2] + 0.02), M4.rz(-Math.PI / 2), M4.rx(Math.PI / 2));
-    for (const p of pist.parts) parts.push({ ...p, m: M4.mul(pm, p.m) });
-    add(rbox(0.045, 0.13, 0.11, 0.012), MAT.polymer, '#1a2027', at(thighMid[0] - 0.08, thighMid[1] - 0.02, thighMid[2] + 0.01));
-    const thighDir = V3.norm(V3.sub(legs[0].knee, legs[0].hip));
-    for (const k of [0.45, 0.62]) ringOn(V3.lerp(legs[0].hip, legs[0].knee, k), thighDir, 0.083 * bulk, 0.006, MAT.nylon, C.NYLON_D);
-    feats.add('holster');
-  }
-  if (look.knife) {
-    const km = look.armor === 'none' ? at(0.14, 0.97, 0.1, M4.rz(0.15)) : at(0.09, 1.32, 0.2, M4.rz(0.5));
-    add(rbox(0.03, 0.13, 0.018, 0.008), MAT.polymer, '#12171c', km);
-    add(cyl(0.012, 0.013, 0.07, 14), MAT.rubber, '#262d35', M4.mul(km, M4.t(0, 0.065, 0)));
-    add(rbox(0.05, 0.008, 0.024, 0.003), MAT.metal, '#7f8a96', M4.mul(km, M4.t(0, 0.066, 0)));
-    feats.add('knife');
-  }
-  return { parts, halos, feats };
-}
-
-/** Сапёрный костюм: массивная куртка из сегментов, воротник, передник,
- *  блок охлаждения на спине, шланги и кабели. */
-function buildBombSuit(add, at, ringOn, feats) {
-  const C = SOLDIER3D;
-  add(loft([
-    { y: 0.86, rx: 0.2, rz: 0.15, e: 2.5 }, { y: 1.0, rx: 0.212, rz: 0.158, e: 2.5 }, { y: 1.2, rx: 0.228, rz: 0.165, e: 2.5 },
-    { y: 1.36, rx: 0.238, rz: 0.158, e: 2.5 }, { y: 1.46, rx: 0.2, rz: 0.14, e: 2.4 }, { y: 1.52, rx: 0.14, rz: 0.12 },
-  ], 36, 3), MAT.fabric, C.EOD);
-  // Нагрудник из пяти изогнутых пластин с заклёпками.
-  for (let i = 0; i < 5; i++) {
-    const y = 1.4 - i * 0.075;
-    add(rbox(0.36 - i * 0.012, 0.085, 0.05, 0.022), MAT.plate, C.EOD_PLATE, at(0, y, 0.165 + i * 0.002, M4.rx(-0.12)));
-    for (const x of [-0.15, -0.05, 0.05, 0.15]) add(sphere(0.006, 8, 6), MAT.metal, '#a3adb7', at(x * (1 - i * 0.03), y + 0.03, 0.192 + i * 0.002));
-  }
-  add(rbox(0.1, 0.03, 0.006, 0.003), MAT.polymer, '#c9a13a', at(0, 1.44, 0.2, M4.rx(-0.12)));            // жёлтая нашивка
-  // Высокий воротник до подбородка.
-  add(loft([{ y: 1.46, rx: 0.205, rz: 0.175 }, { y: 1.56, rx: 0.19, rz: 0.17 }, { y: 1.63, rx: 0.165, rz: 0.155 }], 32, 2, false, false), MAT.plate, C.EOD_PLATE);
-  add(torus(0.16, 0.012, 32, 8), MAT.plate, '#343c46', M4.chain(at(0, 1.635, 0), M4.s(1.02, 1, 0.97)));
-  // Передник: три сегмента до середины бедра.
-  for (let i = 0; i < 3; i++)
-    add(rbox(0.27 - i * 0.03, 0.12, 0.05, 0.022), MAT.plate, C.EOD_PLATE, at(0, 0.93 - i * 0.11, 0.15 + i * 0.012, M4.rx(0.08)));
-  // Подсумки и рация.
-  for (const x of [-0.13, 0.13]) add(rbox(0.08, 0.1, 0.05, 0.015), MAT.nylon, C.NYLON, at(x, 1.03, 0.19));
-  add(rbox(0.07, 0.12, 0.05, 0.012), MAT.nylon, C.NYLON, at(0.25, 1.15, 0.03));
-  // Блок охлаждения на спине с вентилятором.
-  add(rbox(0.3, 0.36, 0.11, 0.03), MAT.plate, '#323a43', at(0, 1.22, -0.21));
-  add(cyl(0.08, 0.08, 0.02, 26), MAT.polymer, '#1b2026', at(0, 1.25, -0.27, M4.rx(Math.PI / 2)));
-  for (let k = 0; k < 6; k++) add(rbox(0.012, 0.07, 0.004, 0.002), MAT.metal, '#5b6671', at(0, 1.25, -0.282, M4.rz(k * Math.PI / 6)));
-  // Шланги охлаждения к шлему и кабель рации — ребристые трубки.
-  for (const s of [-1, 1]) {
-    add(tube([[s * 0.1, 1.4, -0.26], [s * 0.17, 1.55, -0.2], [s * 0.16, 1.66, -0.12], [s * 0.13, 1.72, -0.06]], 0.016, 12, 8), MAT.rubber, C.HOSE);
-    for (let k = 0; k < 8; k++) {
-      const t = k / 8;
-      const p = [s * (0.1 + 0.07 * Math.sin(t * Math.PI)), 1.4 + 0.3 * t, -0.26 + 0.2 * t];
-      add(sphere(0.018, 10, 6, 1, 0.35, 1), MAT.rubber, '#23282f', at(...p));
-    }
-  }
-  add(tube([[0.25, 1.22, 0.03], [0.22, 1.42, 0.12], [0.15, 1.58, 0.17], [0.12, 1.7, 0.16]], 0.006, 8), MAT.rubber, '#101316');
-  // Хомуты на шлангах у выхода из блока.
-  for (const s of [-1, 1]) add(torus(0.02, 0.004, 14, 6), MAT.metal, '#8d98a4', at(s * 0.1, 1.41, -0.255, M4.rx(0.5)));
-  // Боковые ремни с пряжками: куртка затягивается на боках.
-  for (const s of [-1, 1])
-    for (let i = 0; i < 3; i++) {
-      const y = 1.02 + i * 0.13;
-      add(rbox(0.018, 0.035, 0.2, 0.006), MAT.nylon, C.NYLON_D, at(s * 0.232, y, 0, M4.rz(s * 0.08)));
-      add(rbox(0.024, 0.04, 0.03, 0.006), MAT.polymer, '#15191e', at(s * 0.24, y, 0.07, M4.rz(s * 0.08)));
-      add(rbox(0.006, 0.02, 0.018, 0.002), MAT.metal, '#8d98a4', at(s * 0.253, y, 0.07, M4.rz(s * 0.08)));
-    }
-  // Швы между пластинами куртки на спине.
-  for (let i = 0; i < 4; i++) add(rbox(0.36, 0.012, 0.012, 0.004), MAT.nylon, C.NYLON_D, at(0, 1.02 + i * 0.1, -0.162));
-  // Нарукавные сегменты: плечо — три пластины, предплечье — две.
-  feats.add('bombSuit');
-  void ringOn;
-}
-
-function buildBombHelmet(add, at) {
-  const C = SOLDIER3D;
-  const hc = [0, 1.72, 0.0];
-  add(sphere(0.168, 32, 18, 0.95, 1.05, 1.0), MAT.plate, '#37414c', at(...hc));
-  // Забрало: сферический сегмент перед лицом, тёмное стекло с отражениями.
-  add(lathe(arcProfile(0.172, 0, Math.PI * 0.22, Math.PI / 2, 10), 32, 1.2, 0.8), MAT.glass, '#16303d',
-      M4.chain(at(hc[0], hc[1] - 0.02, hc[2] + 0.005), M4.rx(Math.PI / 2)));
-  add(torus(0.172 * Math.cos(Math.PI * 0.22), 0.01, 32, 8), MAT.plate, '#22282f',
-      M4.chain(at(hc[0], hc[1] - 0.02, hc[2] + 0.172 * Math.sin(Math.PI * 0.22) + 0.005), M4.rx(Math.PI / 2), M4.s(1.2, 1, 0.8)));
-  add(rbox(0.22, 0.03, 0.06, 0.012), MAT.plate, '#3a434d', at(0, 1.855, 0.1, M4.rx(0.5)));            // козырёк-гребень
-  for (const s of [-1, 1]) {                                                                         // вентиляция
-    add(cyl(0.035, 0.035, 0.03, 20), MAT.polymer, '#1b2026', at(s * 0.16, 1.72, -0.01, M4.rz(-s * Math.PI / 2)));
-    add(cyl(0.025, 0.025, 0.004, 20), MAT.grille, '#0f1316', at(s * 0.19, 1.72, -0.01, M4.rz(-s * Math.PI / 2)));
-  }
-  add(cyl(0.05, 0.045, 0.05, 22), MAT.plate, '#2e363f', at(0, 1.73, -0.19, M4.rx(-Math.PI / 2)));     // вентилятор сзади
-  add(rbox(0.05, 0.03, 0.03, 0.008), MAT.metal, C.METAL, at(0, 1.87, 0.13, M4.rx(0.4)));             // крепление ПНВ
-  // Болты по кромке забрала.
-  const vr = 0.172 * Math.cos(Math.PI * 0.22), vz = hc[2] + 0.172 * Math.sin(Math.PI * 0.22) + 0.012;
-  for (let k = 0; k < 12; k++) {
-    const a = (k / 12) * Math.PI * 2;
-    add(sphere(0.006, 8, 6), MAT.metal, '#9aa4ae', at(Math.cos(a) * vr * 1.2, hc[1] - 0.02 + Math.sin(a) * vr * 0.8, vz));
-  }
-  // Фонарь сбоку, наушник связи, подбородочная пластина.
-  add(cyl(0.018, 0.02, 0.07, 16), MAT.polymer, '#1b2026', at(-0.17, 1.78, 0.04, M4.rx(Math.PI / 2)));
-  add(cyl(0.015, 0.015, 0.003, 16), MAT.glass, '#cfe8ff', at(-0.17, 1.78, 0.111, M4.rx(Math.PI / 2)), 1 / 0.015);
-  add(rbox(0.04, 0.05, 0.02, 0.008), MAT.polymer, '#1b2026', at(0.17, 1.66, 0.04, M4.rz(0.3)));
-  add(rbox(0.18, 0.05, 0.06, 0.02), MAT.plate, '#3a434d', at(0, 1.585, 0.13, M4.rx(-0.3)));
-}
-
-
-/* ── Оружейная ────────────────────────────────────────────────────────────
-   Фон за бойцом: бетонный пол и стена, рёбра стеновых панелей, синие
-   световые полосы, стойки со стволами, ящики и цинки. Неподвижна и уходит
-   в дымку, чтобы боец оставался главным. */
-function buildArmory() {
-  const parts = [];
-  const add = (msh, mat, col, m = M4.id(), ls = 1) => { parts.push(part(msh, mat, col, m, ls)); };
-  const at = (x, y, z, ...r) => M4.chain(M4.t(x, y, z), ...r);
-  add(rbox(10, 0.04, 10, 0.01), MAT.concrete, '#23272b', at(0, -0.09, -1.5));                     // пол
-  add(rbox(10, 4, 0.3, 0.02), MAT.concrete, '#1f2327', at(0, 1.9, -2.75));                         // стена
-  add(rbox(10, 0.2, 0.3, 0.02), MAT.metal, '#1c2025', at(0, 0.03, -2.55));                         // плинтус
-  // Подиум: металлический бок и светящийся обод.
-  add(cyl(0.97, 0.97, 0.07, 72, 0.02), MAT.metal, '#15181c', at(0, -0.07, 0));
-  add(torus(0.97, 0.006, 72, 6), MAT.glow, '#2f7cff', at(0, 0.0, 0), 1 / 0.006);
-  // Рёбра панелей и световые полосы между ними.
-  for (let i = -4; i <= 4; i++) {
-    const x = i * 0.85;
-    add(rbox(0.08, 3.6, 0.08, 0.01), MAT.metal, '#1a1e23', at(x, 1.8, -2.56));
-    if (Math.abs(i) === 2 || Math.abs(i) === 4)
-      add(rbox(0.025, 2.2, 0.02, 0.008), MAT.glow, '#1c4f9a', at(x + 0.42, 1.55, -2.58), 1 / 0.02);
-  }
-  add(rbox(10, 0.03, 0.02, 0.01), MAT.glow, '#1c4f9a', at(0, 2.75, -2.58), 1 / 0.02);
-  // Стойки со стволами на стене: перфопанель, крючья, стволы боком к камере.
-  const racks = [[-1.05, ['awp', 'ak', 'm4']], [1.05, ['scar20', 'nova', 'mp5']]];
-  for (const [x, guns] of racks) {
-    add(rbox(1.15, 1.05, 0.04, 0.01), MAT.metal, '#23282e', at(x, 1.5, -2.55));
-    for (let r = 0; r < 7; r++)
-      for (let k = 0; k < 11; k++)
-        add(cyl(0.006, 0.006, 0.01, 6, 0), MAT.metal, '#0c0e10', at(x - 0.5 + k * 0.1, 1.08 + r * 0.14, -2.525, M4.rx(Math.PI / 2)));
-    guns.forEach((g, i) => {
-      const gm = at(x - 0.18, 1.8 - i * 0.3, -2.47);
-      for (const p of buildGun(g).parts) parts.push({ ...p, m: M4.mul(gm, p.m) });
-      for (const dx of [-0.2, 0.2]) add(cyl(0.008, 0.008, 0.06, 8), MAT.metal, '#8e99a5', at(x - 0.18 + dx, 1.8 - i * 0.3 - 0.03, -2.53, M4.rx(Math.PI / 2)));
-    });
-  }
-  // Ящики и цинки на полу.
-  add(rbox(0.7, 0.45, 0.5, 0.02), MAT.wood, '#3c3226', at(-1.55, 0.155, -1.7, M4.ry(0.25)));
-  add(rbox(0.5, 0.35, 0.45, 0.02), MAT.wood, '#3a3025', at(-1.45, 0.555, -1.72, M4.ry(0.1)));
-  for (let i = 0; i < 3; i++)
-    add(rbox(0.3, 0.2, 0.16, 0.012), MAT.metal, '#343a2c', at(1.45 + (i % 2) * 0.04, 0.03 + i * 0.205, -1.6, M4.ry(-0.2 + i * 0.1)));
-  add(rbox(0.55, 0.9, 0.45, 0.02), MAT.metal, '#262b31', at(1.95, 0.38, -2.2, M4.ry(-0.3)));      // шкафчик
-  return { parts };
-}
-
-/* ── Показ в арсенале ─────────────────────────────────────────────────────
-   Боец вращается сам — оборот за SPIN секунд; мышью или пальцем его можно
-   повернуть, отпустил — вращение продолжается с того же места. Превью
-   стволов рисует второй рендер вне экрана и копирует кадр в холст карточки. */
-const ARS3D = {
-  SPIN: 12, FOV: 34 * Math.PI / 180,
-  CAM: { eye: [0, 1.2, 3.45], at: [0, 0.93, 0] },
-  yaw: 0.35, last: 0, drag: null,
-  view: null, viewFailed: false,
-  preview: null, previewFailed: false, cards: [], gunImg: {},
-};
-
-function arsenal3D() {
-  if (ARS3D.view) return ARS3D.view;
-  if (ARS3D.viewFailed) return null;
-  try {
-    const cv = $('arsenalCanvas');
-    const dpr = FIGURE.DPR();
-    cv.width = FIGURE.W * dpr; cv.height = FIGURE.H * dpr;
-    ARS3D.view = new Arsenal3D(cv, { scene: true });
-    // Поворот перетаскиванием: и мышью, и пальцем.
-    cv.addEventListener('pointerdown', e => {
-      ARS3D.drag = { x: e.clientX, yaw: ARS3D.yaw };
-      if (cv.setPointerCapture) cv.setPointerCapture(e.pointerId);
-    });
-    cv.addEventListener('pointermove', e => {
-      if (ARS3D.drag) ARS3D.yaw = ARS3D.drag.yaw + (e.clientX - ARS3D.drag.x) * 0.012;
-    });
-    const release = () => { ARS3D.drag = null; };
-    cv.addEventListener('pointerup', release);
-    cv.addEventListener('pointercancel', release);
-    if (cv.style) cv.style.cursor = 'grab';
-  } catch (e) {
-    ARS3D.viewFailed = true;           // без WebGL — плоский портрет
-    ARS3D.view = null;
-    ARS3D.error = String(e && e.message || e);
-  }
-  return ARS3D.view;
-}
-
-function drawArsenalFigure() {
-  if (ARS_REAL.state === 'ready') { drawRealArsenal(); return; }
-  const r = arsenal3D();
-  if (!r) { drawArsenalFigure2D(); return; }
-  const now = performance.now() / 1000;
-  const dt = ARS3D.last ? Math.min(0.1, now - ARS3D.last) : 0;
-  ARS3D.last = now;
-  if (!ARS3D.drag) ARS3D.yaw += dt * (Math.PI * 2 / ARS3D.SPIN);
-  const look = figureLook();
-  const obj = r.model('soldier:' + JSON.stringify(look), () => buildSoldier(look));
-  const breath = Math.sin(now * 1.7) * 0.004;
-  r.frame(obj, M4.chain(M4.t(0, breath, 0), M4.ry(ARS3D.yaw)),
-          { eye: ARS3D.CAM.eye, at: ARS3D.CAM.at, fov: ARS3D.FOV }, now);
-}
-
-/** Картинка ствола для карточки. Рендерится один раз и кэшируется:
- *  превью неподвижны, поэтому каталог не тратит на них ни кадра. */
-function gunImage(wid) {
-  if (ARS3D.gunImg[wid]) return ARS3D.gunImg[wid];
-  if (ARS3D.previewFailed) return null;
-  try {
-    if (!ARS3D.preview) {
-      const off = document.createElement('canvas');
-      off.width = 520; off.height = 192;
-      ARS3D.preview = new Arsenal3D(off, { shadows: false });
-    }
-    const r = ARS3D.preview;
-    const obj = r.model('gun:' + wid, () => buildGun(wid));
-    const { min, max } = obj.bounds;
-    const c = V3.mul(V3.add(min, max), 0.5);
-    const size = Math.max(max[0] - min[0], (max[1] - min[1]) * 2.6);
-    // Три четверти: видно и бок, и верх ствола.
-    const model = M4.chain(M4.ry(-0.42), M4.rx(0.06), M4.t(-c[0], -c[1], -c[2]));
-    r.frame(obj, model, { eye: [0, size * 0.2, size * 0.82], at: [0, -size * 0.015, 0], fov: 30 * Math.PI / 180 }, 0, { floor: false });
-    const img = document.createElement('canvas');
-    img.width = 520; img.height = 192;
-    const ctx = img.getContext('2d');
-    if (!ctx || !ctx.drawImage) throw new Error('нет 2D');
-    ctx.drawImage(r.canvas, 0, 0);
-    ARS3D.gunImg[wid] = img;
-    return img;
-  } catch (e) {
-    ARS3D.previewFailed = true;
-    return null;
-  }
-}
-
-function gunPreviewCanvas(wid) {
-  const img = gunImage(wid);
-  if (!img) return null;
-  const cv = document.createElement('canvas');
-  cv.className = 'cc-3d';
-  cv.width = img.width; cv.height = img.height;
-  cv.getContext('2d').drawImage(img, 0, 0);
-  ARS3D.cards.push({ cv, wid });
-  return cv;
-}
-
-
-/* ═══════════════════════════════════════════════════════════════════════════
-   НАСТОЯЩИЕ МОДЕЛИ — three.js, модель бойца и стволов из интернета.
-   Подгружаются при первом открытии арсенала из vendor/ и assets/ обычными
-   <script>: так работает и страница, открытая двойным кликом (file://).
-   Пока грузится или если файлов нет — остаётся свой рендер (ARS3D).
-   Источники и лицензии — в README, раздел «Авторы моделей».
-   ═══════════════════════════════════════════════════════════════════════════ */
-const ARS_REAL = {
-  state: 'idle',                         // idle → loading → ready | failed
-  SCRIPTS: ['vendor/three.min.js', 'vendor/GLTFLoader.js', 'vendor/RGBELoader.js',
-            'assets/soldier.glb.js', 'assets/guns.glb.js', 'assets/env.hdr.js', 'assets/backdrop.jpg.js'],
-  // Наш ствол → модель из набора Quaternius и его настоящая длина, м.
-  GUNS: {
-    ak: ['06', 0.88], galil: ['07', 0.97], m4: ['25', 0.84], famas: ['24', 0.76], aug: ['24', 0.79],
-    p90: ['23', 0.5], mp5: ['18', 0.68], ump45: ['18', 0.69], mac10: ['23', 0.55],
-    awp: ['22', 1.18], ssg08: ['21', 1.1], scar20: ['19', 1.05],
-    nova: ['15', 1.2], xm1014: ['04', 1.0], mag7: ['17', 0.8],
-    glock: ['08', 0.19], usp: ['16', 0.2], p250: ['11', 0.19], fiveseven: ['09', 0.21], deagle: ['09', 0.27],
-  },
-  // Положение ствола в ладони — подобрано под скелет модели по снимкам.
-  GRIP: { pos: [0, 0, 0], rot: [0, Math.PI, Math.PI] },
-  CAM_YAW: 0,                            // куда в панораме смотрит камера
-  three: null, gun: null, gunId: null,
-};
-
-/** Скрипты по очереди: следующий — когда загрузился предыдущий. */
-function loadScriptsInOrder(list, done, fail) {
-  if (!document.head || !document.createElement) { fail(); return; }
-  let i = 0;
-  const next = () => {
-    if (i >= list.length) { done(); return; }
-    const el = document.createElement('script');
-    el.src = list[i++];
-    el.onload = next;
-    el.onerror = fail;
-    document.head.appendChild(el);
-  };
-  next();
-}
-
-const assetBytes = name => {
-  const b64 = window.ASSETS && window.ASSETS[name];
-  if (!b64) return null;
-  const bin = atob(b64), out = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-  return out.buffer;
-};
-
-/** Фотография ствола для карточки (Wikimedia Commons, фон вырезан) или null. */
+/** Фотография ствола для карточки или null, если фото ещё нет. */
 function weaponPhoto(wid) {
   const b64 = window.ASSETS && window.ASSETS['photo-' + wid];
   if (!b64 || !document.createElement) return null;
@@ -10016,172 +8014,11 @@ function weaponPhoto(wid) {
   return img;
 }
 
-function startRealArsenal() {
-  if (ARS_REAL.state !== 'idle') return;
-  ARS_REAL.state = 'loading';
-  // Фото стволов — отдельно и первыми: карточки не ждут 3D-модель.
-  loadScriptsInOrder(['assets/weapon-photos.js'], () => { if (arsenalOpen()) renderArsenal(); }, () => {});
-  loadScriptsInOrder(ARS_REAL.SCRIPTS, () => {
-    try { initRealArsenal(); } catch (e) { ARS_REAL.state = 'failed'; ARS_REAL.error = String(e && e.message || e); }
-  }, () => { ARS_REAL.state = 'failed'; ARS_REAL.error = 'нет файлов модели'; });
-}
-
-function initRealArsenal() {
-  const T = window.THREE;
-  if (!T || !T.GLTFLoader || !assetBytes('soldier.glb')) throw new Error('нет three.js или модели');
-  const host = $('arsenalCanvas');
-  const cv = document.createElement('canvas');
-  cv.className = 'arsenal-real';
-  host.parentNode.insertBefore(cv, host);
-  const renderer = new T.WebGLRenderer({ canvas: cv, antialias: true });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-  renderer.setSize(FIGURE.W, FIGURE.H, false);
-  renderer.outputEncoding = T.sRGBEncoding;
-  renderer.toneMapping = T.ACESFilmicToneMapping;
-  renderer.toneMappingExposure = 1.0;
-  renderer.physicallyCorrectLights = true;
-  renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = T.PCFSoftShadowMap;
-
-  const scene = new T.Scene();
-  scene.background = new T.Color(0x0b1017);             // пока фото фона не загрузилось
-  const camera = new T.PerspectiveCamera(32, FIGURE.W / FIGURE.H, 0.05, 200);
-  // Камера смотрит в выбранную сторону панорамы; всё остальное ставится перед ней.
-  const rig = new T.Group();
-  rig.rotation.y = ARS_REAL.CAM_YAW;
-  scene.add(rig);
-  camera.position.set(0, 1.12, 4.1);
-  camera.lookAt(0, 0.9, 0);
-  rig.add(camera);
-
-  // Свет и отражения — от HDRI-панорамы цеха; фон — её фотография, размытая.
-  const pmrem = new T.PMREMGenerator(renderer);
-  const hdr = new T.RGBELoader().parse(assetBytes('env.hdr'));
-  const envTex = new T.DataTexture(hdr.data, hdr.width, hdr.height, T.RGBAFormat, hdr.type);
-  envTex.mapping = T.EquirectangularReflectionMapping;
-  envTex.minFilter = envTex.magFilter = T.LinearFilter;
-  envTex.generateMipmaps = false; envTex.flipY = true; envTex.needsUpdate = true;
-  scene.environment = pmrem.fromEquirectangular(envTex).texture;
-  const img = new Image();
-  img.onload = () => {
-    const bg = new T.Texture(img);
-    bg.mapping = T.EquirectangularReflectionMapping;
-    bg.encoding = T.sRGBEncoding;
-    bg.needsUpdate = true;
-    scene.background = bg;
-    scene.backgroundBlurriness = 0.035;
-    scene.backgroundIntensity = 0.55;
-  };
-  img.src = 'data:image/jpeg;base64,' + window.ASSETS['backdrop.jpg'];
-
-  // Ключевой тёплый свет с мягкой тенью и синий контровой сзади.
-  const key = new T.DirectionalLight(0xffe0c0, 3.2);
-  key.position.set(-1.6, 3.6, 2.6);
-  key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
-  Object.assign(key.shadow.camera, { left: -1.4, right: 1.4, top: 2.2, bottom: -0.3, near: 0.5, far: 9 });
-  key.shadow.bias = -0.0004; key.shadow.normalBias = 0.02; key.shadow.radius = 4;
-  rig.add(key); rig.add(key.target);
-  const rimLight = new T.DirectionalLight(0x6aa8ff, 4.5);
-  rimLight.position.set(2.2, 2.4, -2.6);
-  rig.add(rimLight);
-
-  // Подиум: тёмный металл, светящийся обод; тень падает и на пол цеха.
-  const podium = new T.Mesh(new T.CylinderGeometry(0.88, 0.94, 0.07, 72),
-    new T.MeshStandardMaterial({ color: 0x15181c, metalness: 0.85, roughness: 0.32 }));
-  podium.position.y = -0.035; podium.receiveShadow = true;
-  rig.add(podium);
-  const ring = new T.Mesh(new T.TorusGeometry(0.905, 0.007, 8, 128), new T.MeshBasicMaterial({ color: 0x3a8cff }));
-  ring.rotation.x = Math.PI / 2; ring.position.y = 0.001;
-  rig.add(ring);
-  const ground = new T.Mesh(new T.CircleGeometry(4, 48), new T.ShadowMaterial({ opacity: 0.45 }));
-  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.07; ground.receiveShadow = true;
-  rig.add(ground);
-
-  // Боец: рост 1,8 м, стоит на подиуме, анимация стойки с оружием.
-  const pivot = new T.Group();
-  rig.add(pivot);
-  const loader = new T.GLTFLoader();
-  const three = ARS_REAL.three = { T, renderer, scene, camera, pivot, loader, mixer: null, hand: null, clock: 0 };
-  loader.parse(assetBytes('soldier.glb'), '', gltf => {
-    const root = gltf.scene;
-    const box = new T.Box3().setFromObject(root);
-    const k = 1.8 / (box.max.y - box.min.y);
-    root.scale.multiplyScalar(k);
-    box.setFromObject(root);
-    root.position.set(-(box.min.x + box.max.x) / 2, -box.min.y, -(box.min.z + box.max.z) / 2);
-    root.traverse(o => {
-      if (o.isMesh) {
-        o.castShadow = o.receiveShadow = true;
-        o.frustumCulled = false;
-        if (o.material) o.material.envMapIntensity = 1.2;
-      }
-      if (!three.hand && o.isBone && /wrist\.?r|hand\.?r|righthand|hand_r|r_hand/i.test(o.name)) three.hand = o;
-    });
-    pivot.add(root);
-    const clips = gltf.animations || [];
-    const clip = clips.find(c => /idle.?gun$/i.test(c.name)) || clips.find(c => /idle.?gun|rifle|aim/i.test(c.name))
-               || clips.find(c => /idle/i.test(c.name)) || clips[0];
-    if (clip) {
-      three.mixer = new T.AnimationMixer(root);
-      three.mixer.clipAction(clip).play();
-    }
-    ARS_REAL.state = 'ready';
-    host.style.display = 'none';
-    // Поворот мышью и пальцем — тот же, что у своего рендера.
-    cv.addEventListener('pointerdown', e => { ARS3D.drag = { x: e.clientX, yaw: ARS3D.yaw }; });
-    cv.addEventListener('pointermove', e => { if (ARS3D.drag) ARS3D.yaw = ARS3D.drag.yaw + (e.clientX - ARS3D.drag.x) * 0.012; });
-    for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) cv.addEventListener(ev, () => { ARS3D.drag = null; });
-  }, err => { ARS_REAL.state = 'failed'; ARS_REAL.error = String(err && err.message || err); });
-}
-
-/** Ствол в правой руке: модель из набора, подогнанная по настоящей длине. */
-function syncRealGun(wid) {
-  const three = ARS_REAL.three;
-  if (!three.hand || ARS_REAL.gunId === wid) return;
-  ARS_REAL.gunId = wid;
-  if (ARS_REAL.gun) { ARS_REAL.gun.parent.remove(ARS_REAL.gun); ARS_REAL.gun = null; }
-  const spec = ARS_REAL.GUNS[wid];
-  const bytes = spec && assetBytes('gun-' + spec[0] + '.glb');
-  if (!bytes) return;
-  three.loader.parse(bytes, '', gltf => {
-    if (ARS_REAL.gunId !== wid) return;
-    const T = three.T, gun = gltf.scene;
-    const box = new T.Box3().setFromObject(gun);
-    const size = box.getSize(new T.Vector3());
-    const holder = new T.Group();
-    // Ствол вдоль самой длинной оси — её приводим к настоящей длине.
-    gun.scale.multiplyScalar(spec[1] / Math.max(size.x, size.y, size.z));
-    holder.add(gun);
-    gun.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
-    // Кость руки несёт масштаб скелета — компенсируем, чтобы ствол был в метрах.
-    const ws = three.hand.getWorldScale(new T.Vector3());
-    holder.scale.setScalar(1 / ws.x);
-    holder.position.fromArray(ARS_REAL.GRIP.pos).multiplyScalar(1 / ws.x);
-    holder.rotation.set(...ARS_REAL.GRIP.rot);
-    three.hand.add(holder);
-    ARS_REAL.gun = holder;
-  });
-}
-
-function drawRealArsenal() {
-  const three = ARS_REAL.three;
-  const now = performance.now() / 1000;
-  const dt = three.clock ? Math.min(0.1, now - three.clock) : 0;
-  three.clock = now;
-  if (!ARS3D.drag) ARS3D.yaw += dt * (Math.PI * 2 / ARS3D.SPIN);
-  three.pivot.rotation.y = ARS3D.yaw;
-  if (three.mixer) three.mixer.update(dt);
-  syncRealGun(figureLook().inHands);
-  three.renderer.render(three.scene, three.camera);
-}
-
-/* ═══ 3D-КОНЕЦ ═══ */
 
 const arsenalOpen = () => $('arsenalScreen').classList.contains('show');
 
 function openArsenal() {
-  startRealArsenal();
+  loadWeaponPhotos();
   Audio2D.init();
   Audio2D.resume();
   // Обучение ведёт сразу на вкладку того, что надо купить.
