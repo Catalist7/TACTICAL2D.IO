@@ -192,6 +192,52 @@ say(player.slots.rifle === 'ak' && player.armor === 100 && owns('ak'),
   say(!crash, crash ? 'ПАДЕНИЕ: ' + crash.message : 'запрещённое хранилище не ломает арсенал');
 }
 
+// ── Боец в арсенале: лицом, в полный рост, в том, что надето ─────────────
+{
+  const wear = (armor, rifle, pistol = 'usp') => {
+    if (armor && !progress.armorOwned.includes(armor)) progress.armorOwned.push(armor);
+    progress.armorEquipped = armor;
+    progress.equipped.rifle = rifle;
+    progress.equipped.pistol = pistol;
+    return figureLook();
+  };
+  let look = wear(null, null);
+  say(look.armor === 'none' && look.head === 'cap', 'без брони — форма и кепка');
+  say(look.inHands === 'usp' && !look.holster, 'без основного ствола пистолет в руках, кобура пуста');
+  look = wear('kevlar', 'ak');
+  say(look.armor === 'kevlar' && look.head === 'cap', 'кевлар — жилет, но шлема ещё нет');
+  say(look.inHands === 'ak' && look.holster === 'usp', 'автомат в руках, пистолет в кобуре');
+  say(look.knife, 'нож на снаряжении');
+  for (const id of ['helmet', 'assault', 'heavy'])
+    say(wear(id, 'm4').head === 'helmet', `${armorOf(id).name} — со шлемом`);
+  look = wear('eod', 'nova');
+  say(look.armor === 'eod' && look.head === 'bomb', 'сапёрный костюм — шлем с забралом');
+
+  // Оптика объясняет, почему боец видит в темноте: без брони — тепловизор,
+  // с любой бронёй — квадрокуляр ночного видения на четыре линзы.
+  say(wear(null, 'ak').optic === 'thermal', 'без брони — тепловизионные очки');
+  say(['kevlar', 'helmet', 'assault', 'heavy', 'eod'].every(a => wear(a, 'ak').optic === 'nvg4'),
+      'с любой бронёй — квадрокуляр на четыре линзы');
+  say(NVG_LENSES.nvg4.length === 4 && !NVG_LENSES.nvg6, 'линз ровно четыре, шестилинзового прибора нет');
+  say(wear('assault', 'ak').mask, 'лицо закрыто маской');
+
+  // Рисуется при любой броне с любым стволом и в любую секунду анимации.
+  const armors = [null, ...ARMOR_TYPES.map(a => a.id)];
+  const rifles = Object.keys(WEAPONS).filter(id => WEAPONS[id].slot === 'rifle');
+  const pistols = Object.keys(WEAPONS).filter(id => WEAPONS[id].slot === 'pistol');
+  const bad = [];
+  for (const armor of armors)
+    for (const gun of [null, ...rifles])
+      for (const pistol of gun ? ['usp'] : pistols) {
+        wear(armor, gun, pistol);
+        try { drawArsenalFigure(); } catch (e) { bad.push(`${armor}/${gun}/${pistol}: ${e.message}`); }
+      }
+  say(!bad.length, `фигура рисуется при всех ${armors.length} видах брони и всех стволах` + (bad.length ? ' — ' + bad[0] : ''));
+  const cv = $('arsenalCanvas');
+  say(cv.width === 300 * FIGURE.DPR() && cv.height === 400 * FIGURE.DPR(), 'холст фигуры — в плотности экрана, без размытия');
+  wear(null, null);
+}
+
 // ── Превью бойца рисуется ────────────────────────────────────────────────
 {
   let crash = null;

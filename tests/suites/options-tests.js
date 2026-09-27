@@ -44,7 +44,8 @@ function squadOf(list) {
       'у каждого пункта есть название, пояснение и два варианта');
 
   say(setting('squadSkill') === 'medium' && !squadStrong(), 'по умолчанию напарники средние');
-  say(setting('sharedVision') === 'off' && !sharedVision(), 'по умолчанию общий обзор выключен');
+  say(setting('sharedVision') === 'on' && sharedVision(), 'по умолчанию общий обзор с отрядом включён');
+  setOption('sharedVision', 'off');
 
   say(setOption('squadSkill', 'strong') && squadStrong(), 'выучку можно переключить на сильную');
   say(!setOption('squadSkill', 'гениальные'), 'неизвестное значение не принимается');
@@ -67,9 +68,24 @@ function squadOf(list) {
 
   // Старое сохранение без настроек: играем на значениях по умолчанию.
   localStorage.setItem(PROGRESS_KEY, JSON.stringify({ completed: 3 }));
-  progress.settings = { squadSkill: 'medium', sharedVision: 'off' };
+  progress.settings = { squadSkill: 'medium', sharedVision: 'on', v: 2 };
   loadProgress();
-  say(!squadStrong() && !sharedVision(), 'сохранение без настроек даёт значения по умолчанию');
+  say(!squadStrong() && sharedVision(), 'сохранение без настроек даёт значения по умолчанию');
+
+  // До 1.4.3 обзор был выключен по умолчанию и сохранялся вместе со всем.
+  // Такое «выключено» — не выбор игрока: один раз включаем.
+  localStorage.setItem(PROGRESS_KEY, JSON.stringify({ completed: 3,
+    settings: { squadSkill: 'strong', sharedVision: 'off' } }));
+  progress.settings = { squadSkill: 'medium', sharedVision: 'on', v: 2 };
+  loadProgress();
+  say(sharedVision() && squadStrong(), 'старое сохранение: обзор включён, выучка своя');
+  saveProgress();
+  setOption('sharedVision', 'off');
+  progress.settings = { squadSkill: 'medium', sharedVision: 'on', v: 2 };
+  loadProgress();
+  say(!sharedVision(), 'выключенный уже в новой версии обзор так и остаётся выключенным');
+  setOption('sharedVision', 'on');
+  setOption('squadSkill', 'medium');
 }
 
 // ── Экран настроек ────────────────────────────────────────────────────────

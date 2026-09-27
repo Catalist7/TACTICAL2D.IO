@@ -1,10 +1,25 @@
 # TACTICAL2D.IO
 
 Тактический шутер сверху вниз: спецназ против террористов, режим с заложниками.
-Вся игра — один файл `index.html` без единой зависимости: Canvas 2D, звук
-собирается на лету через WebAudio, модели бойцов, оружия и карт рисуются кодом.
+Сама игра — один файл `index.html`: Canvas 2D, звук собирается на лету через
+WebAudio, бойцы, оружие и карты в бою рисуются кодом. Арсенал показывает
+настоящую 3D-модель и фотографии стволов — они лежат рядом, в `assets/` и
+`vendor/` (авторы и лицензии — в конце этого файла).
 
-Текущая версия — **1.4.2**, что в ней нового — в [CHANGELOG.md](CHANGELOG.md).
+Текущая версия — **1.5.0**, что в ней нового — в [CHANGELOG.md](CHANGELOG.md).
+
+## Что нового в 1.5: новый арсенал
+
+- **3D-боец.** В арсенале стоит трёхмерный спецназовец в анимированной стойке
+  с купленным стволом в руке и медленно вращается — мышью или пальцем его
+  можно повернуть. Модель, стволы и освещение — готовые работы под свободными
+  лицензиями, движок — three.js.
+- **Цех за спиной.** Фон — фотопанорама промышленного цеха: она же даёт свет
+  и отражения, боец отбрасывает мягкую тень на подиум.
+- **Фото стволов.** На карточках каталога — настоящие фотографии всех 20
+  стволов сбоку, фон вырезан. Картинки неподвижны и не отнимают кадры.
+- **Общий обзор с отрядом включён по умолчанию** — видишь всё, что видят твои
+  бойцы. Выключается в настройках.
 
 ## Что нового в 1.4: красные бочки и быстрые приказы
 
@@ -91,11 +106,57 @@
 
 Нужны `node` и `python3`. Наборы собираются из `index.html`: скрипт игры
 склеивается с заготовкой браузера и самим набором, поэтому тесты проверяют
-ровно тот код, который открывается в браузере. Сейчас это 24 набора и
-3282 проверки: от геометрии карт и пробития до крови, брони, экономики,
+ровно тот код, который открывается в браузере. Сейчас это 25 наборов и
+3420 проверок: от геометрии карт и пробития до крови, брони, экономики,
 поведения отряда и настроек.
 
 Встроенная самопроверка доступна и в браузере — открой `index.html?test=1`
 и посмотри в консоль.
 
 Инструменты для снимков кадра описаны в `tests/tools/README.md`.
+
+## Авторы моделей и картинок
+
+Арсенал использует чужие работы под свободными лицензиями. Код игры — свой.
+
+| Что | Автор | Лицензия | Где взято |
+|---|---|---|---|
+| three.js r147 — 3D-движок арсенала (`vendor/`) | three.js authors | MIT, см. `vendor/three-LICENSE.txt` | [threejs.org](https://threejs.org) |
+| Модель бойца SWAT (`assets/soldier.glb.js`) | Quaternius | CC0 | [poly.pizza/m/Btfn3G5Xv4](https://poly.pizza/m/Btfn3G5Xv4) |
+| Модели стволов, Ultimate Guns Pack (`assets/guns.glb.js`) | Quaternius | CC0 | [poly.pizza — Ultimate Guns Pack](https://poly.pizza/bundle/Ultimate-Guns-Pack-cpgUfI4t2F) |
+| Панорама цеха Industrial Pipe & Valve 01 (`assets/env.hdr.js`, `assets/backdrop.jpg.js`) | Philip Modin, Poly Haven | CC0 | [polyhaven.com](https://polyhaven.com/a/industrial_pipe_and_valve_01) |
+
+### Фотографии стволов на карточках арсенала
+
+Настоящее оружие с Wikimedia Commons; фон вырезан нейросетью
+(`tools/cutout-weapons.py`), кадр обрезан, два снимка выровнены по горизонту.
+Где точного образца под свободной лицензией нет, взят ближайший похожий
+ствол (P320 вместо P250, Serbu Super Shorty вместо MAG-7, SSG 69 вместо SSG 08,
+Benelli SuperNova вместо Nova).
+
+| Ствол в игре | Фото | Автор | Лицензия |
+|---|---|---|---|
+| Glock-18 | [Glock 17 (transparent background).jpg](https://commons.wikimedia.org/wiki/File:Glock_17_(transparent_background).jpg) | U.S. Bureau of Alcohol, Tobacco, Firearms and Explosives | Public domain |
+| USP-S | [First-year H&K USP 9mm (32415150000) modified.png](https://commons.wikimedia.org/wiki/File:First-year_H%26K_USP_9mm_(32415150000)_modified.png) | lifesizepotato | CC0 1.0 |
+| Desert Eagle | [Desert-Eagle-chrome-p1030142.jpg](https://commons.wikimedia.org/wiki/File:Desert-Eagle-chrome-p1030142.jpg) | Rama | CC BY-SA 2.0 FR |
+| P250 | [M18 pistol.png](https://commons.wikimedia.org/wiki/File:M18_pistol.png) | Vicki Stein | Public domain |
+| Five-SeveN | [FN Five Seven.jpg](https://commons.wikimedia.org/wiki/File:FN_Five_Seven.jpg) | U.S. Bureau of Alcohol, Tobacco, Firearms and Explosives | Public domain |
+| MP5-SD | [MP5SD.JPG](https://commons.wikimedia.org/wiki/File:MP5SD.JPG) | не указан (Public domain) | Public domain |
+| MAC-10 | [MAC10.jpg](https://commons.wikimedia.org/wiki/File:MAC10.jpg) | Mcumpston (Mike Cumpston) at English Wikipedia | Public domain |
+| UMP-45 | [HKUMP45.JPG](https://commons.wikimedia.org/wiki/File:HKUMP45.JPG) | Asams10 at English Wikipedia | CC BY-SA 3.0 |
+| P90 | [FN-P90 noBG.jpg](https://commons.wikimedia.org/wiki/File:FN-P90_noBG.jpg) | User:5erK | CC BY-SA 4.0 |
+| Nova | [Benelli-SuperNova-Tactical.jpg](https://commons.wikimedia.org/wiki/File:Benelli-SuperNova-Tactical.jpg) | Picanox | CC BY-SA 4.0 |
+| MAG-7 | [My Serbu.jpg](https://commons.wikimedia.org/wiki/File:My_Serbu.jpg) | Bluejames19 | Public domain |
+| XM1014 | [Semi-automatic combat shotgun.jpg](https://commons.wikimedia.org/wiki/File:Semi-automatic_combat_shotgun.jpg) | Mesa Tactical | CC BY 2.0 |
+| Galil AR | [IMI-Galil.jpg](https://commons.wikimedia.org/wiki/File:IMI-Galil.jpg) | Israel Defense Forces (derivative: NatanFlayer) | CC BY 2.0 |
+| FAMAS | [FAMAS Assaultrifle FRA noBG.png](https://commons.wikimedia.org/wiki/File:FAMAS_Assaultrifle_FRA_noBG.png) | David.Monniaux | CC BY-SA 4.0 |
+| AK-47 | [AK-47 assault rifle.jpg](https://commons.wikimedia.org/wiki/File:AK-47_assault_rifle.jpg) | Ickybicky at en.wikipedia | Public domain |
+| M4A1 | [M4A1-flattop.png](https://commons.wikimedia.org/wiki/File:M4A1-flattop.png) | Source: PEO Soldier; derivative: User:MathKnight | Public domain |
+| AUG | [Steyr AUG 5,56 mm noBG.png](https://commons.wikimedia.org/wiki/File:Steyr_AUG_5,56_mm_noBG.png) | MoserB | CC BY-SA 4.0 |
+| SSG 08 | [Steyr SSG69.jpg](https://commons.wikimedia.org/wiki/File:Steyr_SSG69.jpg) | Sigfried Arnold Suit | CC BY-SA 3.0 |
+| AWP | [AWM-338-white.jpg](https://commons.wikimedia.org/wiki/File:AWM-338-white.jpg) | Source: Vitaly V. Kuzmin; derivative: User:MathKnight | CC BY-SA 4.0 |
+| SCAR-20 | [SCAR-H EP.jpg](https://commons.wikimedia.org/wiki/File:SCAR-H_EP.jpg) | Bryan L. Castro | CC BY-SA 4.0 |
+
+Модели и картинки лежат в `assets/` скриптами — так их грузит и страница,
+открытая двойным кликом. Новый файл упаковывается командой
+`python3 tools/pack-asset.py путь/к/файлу имя`.
